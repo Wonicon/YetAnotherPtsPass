@@ -66,7 +66,6 @@ public class WholeProgramTransformer extends SceneTransformer {
                     Object lop = ((DefinitionStmt)u).getLeftOp(),
                             rop = ((DefinitionStmt)u).getRightOp();
                     if (rop instanceof NewExpr) {
-                        System.out.println("Allocate " + allocId);
                         anderson.addNewConstraint(allocId, (Local)lop);
                     }
                     if (lop instanceof Local && rop instanceof Local) {

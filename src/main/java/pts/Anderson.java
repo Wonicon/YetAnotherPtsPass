@@ -26,6 +26,7 @@ class NewConstraint {
 }
 
 public class Anderson {
+
 	private List<AssignConstraint> assignConstraintList = new ArrayList<>();
 	private List<NewConstraint> newConstraintList = new ArrayList<>();
 
@@ -40,12 +41,17 @@ public class Anderson {
 	}
 
 	void run() {
+		DebugLogger dl;
+	    dl = new DebugLogger();
+
 		for (NewConstraint nc : newConstraintList) {
 			if (!pts.containsKey(nc.to)) {
 				pts.put(nc.to, new TreeSet<>());
-				System.out.printf("Add AllocId: %d\n", nc.allocId);
+//				dl.log(dl.intraProc,"Add AllocId: %d\n", nc.allocId);
 			}
-			System.out.printf("Mark %s -> %d\n", nc.to.getName(), nc.allocId);
+			if (nc.allocId > 0) {
+				dl.log(dl.intraProc, "Mark %s -> %d (Alloc)\n", nc.to.getName(), nc.allocId);
+			}
 			pts.get(nc.to).add(nc.allocId);
 		}
 		for (boolean flag = true; flag; ) {
@@ -56,13 +62,13 @@ public class Anderson {
 				}	
 				if (!pts.containsKey(ac.to)) {
 					pts.put(ac.to, new TreeSet<>());
-					System.out.printf("Add Pointer: %s\n", ac.to.getName());
+//					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
 				}
 				for (Integer pointee: pts.get(ac.from)) {
 				    if (pts.get(ac.to).contains(pointee)) {
 				    	continue;
 					}
-					System.out.printf("Mark %s -> %d\n", ac.to.getName(), pointee);
+					dl.log(dl.intraProc && pointee > 0,"Mark %s -> %d\n", ac.to.getName(), pointee);
 				}
 				if (pts.get(ac.to).addAll(pts.get(ac.from))) {
 					flag = true;
