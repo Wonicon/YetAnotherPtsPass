@@ -17,12 +17,11 @@ import soot.SceneTransformer;
 import soot.SootMethod;
 import soot.Unit;
 import soot.Value;
-import soot.jimple.DefinitionStmt;
-import soot.jimple.IntConstant;
-import soot.jimple.InvokeExpr;
-import soot.jimple.InvokeStmt;
-import soot.jimple.NewExpr;
+import soot.grimp.internal.GAssignStmt;
+import soot.jimple.*;
+import soot.jimple.internal.JAssignStmt;
 import soot.jimple.toolkits.callgraph.ReachableMethods;
+import soot.shimple.PhiExpr;
 import soot.shimple.Shimple;
 import soot.shimple.ShimpleBody;
 import soot.toolkits.graph.BlockGraph;
@@ -40,6 +39,9 @@ public class WholeProgramTransformer extends SceneTransformer {
         ReachableMethods reachableMethods = Scene.v().getReachableMethods();
         QueueReader<MethodOrMethodContext> qr = reachableMethods.listener();
 
+        DebugLogger dl = new DebugLogger();
+        boolean breakFlag = false;
+
         while (qr.hasNext()) {
             SootMethod method = qr.next().method();
             if (!method.hasActiveBody()) {
@@ -48,6 +50,7 @@ public class WholeProgramTransformer extends SceneTransformer {
 
             int allocId = 0;
             for (Unit u : method.getActiveBody().getUnits()) {
+                dl.log(dl.disasm, u.toString() + "\n");
                 if (u instanceof InvokeStmt) {
 //                    System.out.println("Reached here 0");
                     InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
@@ -62,16 +65,46 @@ public class WholeProgramTransformer extends SceneTransformer {
                     }
                 }
                 if (u instanceof DefinitionStmt) {
-//                    System.out.println("Reached here 3");
+                    dl.log(dl.disasm, "-> Definition stmt -> %s\n",
+                            u.getClass().getSimpleName());
                     Object lop = ((DefinitionStmt)u).getLeftOp(),
                             rop = ((DefinitionStmt)u).getRightOp();
+
                     if (rop instanceof NewExpr) {
+                        if (rop.toString().equals("new java.util.Properties")) {
+                            // This expr might be the end of user codes,
+                            // break to lessen outputs;
+                            breakFlag = true;
+                            break;
+                        }
                         anderson.addNewConstraint(allocId, (Local)lop);
                     }
-                    if (lop instanceof Local && rop instanceof Local) {
-                        anderson.addAssignConstraint((Local)rop, (Local)lop);
+
+                    if (rop instanceof NewArrayExpr) {
+                        anderson.addNewConstraint(allocId, (Local)lop);
+                        // TODO: Add constraint for contents
+                        anderson.addArrayConstraint(allocId);
+                    }
+
+                    if (u instanceof JAssignStmt) {
+
+                        if (lop instanceof Local && rop instanceof Local) {
+                            anderson.addAssignConstraint((Local) rop, (Local)lop);
+
+                        } else if (lop instanceof Local && rop instanceof Ref) {
+                            dl.log(dl.intraProc, rop.toString() + "\n");
+                            anderson.addRef2LocalAssign((Ref) rop, (Local) lop);
+                            // TODO:
+//                            dl.log(dl.intraProc, .toString());
+                        }
                     }
                 }
+//                if (u instanceof Return) {
+//
+//                }
+            }
+            if (breakFlag) {
+                break;
             }
         }
 
