@@ -1,5 +1,6 @@
 package pts;
 
+import soot.Local;
 import soot.Unit;
 import soot.toolkits.graph.DirectedGraph;
 import soot.toolkits.scalar.ArraySparseSet;
@@ -42,7 +43,7 @@ public class PtsAnalysis extends ForwardFlowAnalysis {
     }
 
     private void kill(FlowSet in, Unit u, FlowSet outSet) {
-
+        FlowSet kills = (FlowSet) emptySet.clone();
     }
 
     private void gen(FlowSet out, Unit u) {
