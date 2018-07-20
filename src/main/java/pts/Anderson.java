@@ -109,10 +109,14 @@ public class Anderson {
             }
             localPTS.get(nc.to).add(nc.allocId);
         }
+        int round = 0;
 		for (boolean flag = true; flag; ) {
+		    dl.log(dl.intraProc, "Round = %d ----------------------\n", round);
             flag = runL2LAssign();
             flag |= runL2RAssign();
             flag |= runR2LAssign();
+            dl.log(dl.intraProc, "Flag = %b\n", flag);
+            round += 1;
 		}
 	}
 
@@ -127,7 +131,7 @@ public class Anderson {
     private boolean runL2RAssign() {
         boolean flag = false;
         for (Local2RefAssign l2ra: local2RefAssigns) {
-
+            dl.log(dl.constraintPrint, "%s = %s\n", l2ra.to, l2ra.from);
             // if from is empty, skip
             if (!localPTS.containsKey(l2ra.from)) {
                 continue;
@@ -143,6 +147,15 @@ public class Anderson {
                         if (!arrayContentPTS.containsKey(i)) {
                             arrayContentPTS.put(i, new TreeSet<>());
                         }
+
+                        for (Integer pointee: localPTS.get(l2ra.from)) {
+                            if (arrayContentPTS.get(i).contains(pointee)) {
+                                continue;
+                            }
+                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d\n",
+                                    i, pointee);
+                        }
+
                         flag |= arrayContentPTS.get(i).addAll(localPTS.get(l2ra.from));
                     }
 
@@ -161,6 +174,7 @@ public class Anderson {
     private boolean runR2LAssign() {
         boolean flag = false;
         for (Ref2LocalAssign r2la: ref2LocalAssigns) {
+            dl.log(dl.constraintPrint, "%s = %s\n", r2la.to, r2la.from);
 
             // if from is empty, skip
             if (r2la.from instanceof ArrayRef) {
@@ -179,6 +193,7 @@ public class Anderson {
                     }
                 }
                 if (empty) {
+                    dl.loge(dl.intraProc, "point set of content of array not found\n");
                     continue;
                 }
 
@@ -196,6 +211,14 @@ public class Anderson {
             Local base = (Local) ar.getBase();
             for (Integer i: localPTS.get(base)) {
                 if (arrayContentPTS.containsKey(i)) {
+                    for (Integer pointee: arrayContentPTS.get(i)) {
+                        if (localPTS.get(r2la.to).contains(pointee)) {
+                            continue;
+                        }
+                        dl.log(dl.intraProc && pointee > 0, "Mark %s -> %d\n",
+                                r2la.to.getName(), pointee);
+                    }
+
                     flag |= localPTS.get(r2la.to).addAll(arrayContentPTS.get(i));
                 }
             }
@@ -206,6 +229,7 @@ public class Anderson {
 	private boolean runL2LAssign() {
         boolean flag = false;
         for (Local2LocalAssign ac : local2LocalAssigns) {
+            dl.log(dl.constraintPrint, "%s = %s\n", ac.to, ac.from);
 
             // if from is empty, skip
             if (!localPTS.containsKey(ac.from)) {

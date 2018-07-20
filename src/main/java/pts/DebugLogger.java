@@ -6,6 +6,7 @@ public class DebugLogger {
     boolean interProc;
     boolean disasm;
     boolean typePrint;
+    boolean constraintPrint;
 
     DebugLogger() {
         debug_all = true;
@@ -13,6 +14,7 @@ public class DebugLogger {
         intraProc = true;
         disasm = false;
         typePrint = false;
+        constraintPrint = false;
     }
 
     void log(boolean flag, String format, Object... args) {
