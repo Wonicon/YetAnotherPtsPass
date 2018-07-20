@@ -44,7 +44,7 @@ public class WholeProgramTransformer extends SceneTransformer {
 
             int allocId = 0;
             for (Unit u : method.getActiveBody().getUnits()) {
-                dl.log(dl.disasm, u.toString() + "\n");
+                dl.log(dl.intraProc, u.toString() + "\n");
                 if (u instanceof InvokeStmt) {
 //                    System.out.println("Reached here 0");
                     InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
@@ -72,6 +72,7 @@ public class WholeProgramTransformer extends SceneTransformer {
                                 breakFlag = true;
                                 break;
                             }
+                            // lop must be local, not ref
                             anderson.addNewConstraint(allocId, (Local)lop);
                         } else if (rop instanceof NewArrayExpr) {
                             anderson.addNewConstraint(allocId, (Local)lop);
@@ -88,7 +89,7 @@ public class WholeProgramTransformer extends SceneTransformer {
                             anderson.addLocal2RefAssign((Local) rop, (Ref) lop);
 
                         } else if (lop instanceof Ref && rop instanceof Ref) {
-                            anderson.addRef2RefAssign((Ref) rop, (Ref) lop);
+                            dl.loge(dl.debug_all,"Impossible case, ignored!\n");
 
                         } else {
                             dl.loge(dl.intraProc, "lop: %s, rop: %s\n",

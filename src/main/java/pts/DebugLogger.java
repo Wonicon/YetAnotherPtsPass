@@ -5,12 +5,14 @@ public class DebugLogger {
     boolean intraProc;
     boolean interProc;
     boolean disasm;
+    boolean typePrint;
 
     DebugLogger() {
         debug_all = true;
         interProc = false;
         intraProc = true;
-        disasm = true;
+        disasm = false;
+        typePrint = false;
     }
 
     void log(boolean flag, String format, Object... args) {

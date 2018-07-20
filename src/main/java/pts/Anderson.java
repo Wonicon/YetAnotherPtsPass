@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+import org.jboss.util.NotImplementedException;
 import soot.Local;
+import soot.jimple.ArrayRef;
 import soot.jimple.Ref;
 
 class Local2LocalAssign {
@@ -89,53 +91,147 @@ public class Anderson {
 		local2RefAssigns.add(new Local2RefAssign(from, to));
 	}
 
-	private List<Ref2RefAssign> ref2RefAssigns = new ArrayList<>();
-	void addRef2RefAssign(Ref from, Ref to) {
-		ref2RefAssigns.add(new Ref2RefAssign(from, to));
-	}
+	private Map<Local, TreeSet<Integer>> localPTS = new HashMap<>();
 
-	private Map<Local, TreeSet<Integer>> pts = new HashMap<>();
+    private Map<Integer, TreeSet<Integer>> arrayContentPTS = new HashMap<>();
 
-    private Map<Integer, TreeSet<Local>> ppts = new HashMap<>();
+    private DebugLogger dl = new DebugLogger();
 
 	void run() {
-		DebugLogger dl;
-	    dl = new DebugLogger();
-
 		for (NewConstraint nc : newConstraints) {
-			if (!pts.containsKey(nc.to)) {
-				pts.put(nc.to, new TreeSet<>());
-//				dl.log(dl.intraProc,"Add AllocId: %d\n", nc.allocId);
-			}
-			if (nc.allocId > 0) {
-				dl.log(dl.intraProc, "Mark %s -> %d (Alloc)\n", nc.to.getName(), nc.allocId);
-			}
-			pts.get(nc.to).add(nc.allocId);
-		}
+            if (!localPTS.containsKey(nc.to)) {
+                localPTS.put(nc.to, new TreeSet<>());
+
+            }
+            if (nc.allocId > 0) {
+                dl.log(dl.typePrint, "to class: %s\n", nc.to.getClass().getSimpleName());
+                dl.log(dl.intraProc, "Mark %s -> %d (Alloc)\n", nc.to.getName(), nc.allocId);
+            }
+            localPTS.get(nc.to).add(nc.allocId);
+        }
 		for (boolean flag = true; flag; ) {
-			flag = false;
-			for (Local2LocalAssign ac : local2LocalAssigns) {
-				if (!pts.containsKey(ac.from)) {
-					continue;
-				}	
-				if (!pts.containsKey(ac.to)) {
-					pts.put(ac.to, new TreeSet<>());
-//					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
-				}
-				for (Integer pointee: pts.get(ac.from)) {
-				    if (pts.get(ac.to).contains(pointee)) {
-				    	continue;
-					}
-					dl.log(dl.intraProc && pointee > 0,"Mark %s -> %d\n", ac.to.getName(), pointee);
-				}
-				if (pts.get(ac.to).addAll(pts.get(ac.from))) {
-					flag = true;
-				}
-			}
+            flag = runL2LAssign();
+            flag |= runL2RAssign();
+            flag |= runR2LAssign();
 		}
 	}
+
+	private boolean baseInLocalPTS(ArrayRef ar) {
+        if (ar.getBase() instanceof Local) {
+            Local base = (Local) ar.getBase();
+            return localPTS.containsKey(base);
+        }
+        return false;
+    }
+
+    private boolean runL2RAssign() {
+        boolean flag = false;
+        for (Local2RefAssign l2ra: local2RefAssigns) {
+
+            // if from is empty, skip
+            if (!localPTS.containsKey(l2ra.from)) {
+                continue;
+            }
+
+            if (l2ra.to instanceof ArrayRef) {
+                ArrayRef ar = (ArrayRef) l2ra.to;
+
+                if (baseInLocalPTS(ar)) {
+                    Local base = (Local) ar.getBase();
+                    for (Integer i: localPTS.get(base)) {
+                        // check to, init it if empty
+                        if (!arrayContentPTS.containsKey(i)) {
+                            arrayContentPTS.put(i, new TreeSet<>());
+                        }
+                        flag |= arrayContentPTS.get(i).addAll(localPTS.get(l2ra.from));
+                    }
+
+                } else {
+                    dl.loge(dl.intraProc, "base of array ref is not local!\n");
+                }
+
+            } else {
+                dl.loge(dl.intraProc, "Ref type not implemented!\n");
+                throw new NotImplementedException();
+            }
+        }
+        return flag;
+    }
+
+    private boolean runR2LAssign() {
+        boolean flag = false;
+        for (Ref2LocalAssign r2la: ref2LocalAssigns) {
+
+            // if from is empty, skip
+            if (r2la.from instanceof ArrayRef) {
+                ArrayRef ar = (ArrayRef) r2la.from;
+                if (!baseInLocalPTS(ar)) {
+                    dl.loge(dl.intraProc, "base of array ref is not local or" +
+                            " not in local PTS!\n");
+                    continue;
+                }
+                boolean empty = true;
+                Local base = (Local) ar.getBase();
+                for (Integer i: localPTS.get(base)) {
+                    if (arrayContentPTS.containsKey(i) &&
+                            !arrayContentPTS.get(i).isEmpty()) {
+                        empty = false;
+                    }
+                }
+                if (empty) {
+                    continue;
+                }
+
+            } else {
+                dl.loge(dl.intraProc, "Ref type not implemented!\n");
+                throw new NotImplementedException();
+            }
+
+            // check to, and init it if empty
+            if (!localPTS.containsKey(r2la.to)) {
+                localPTS.put(r2la.to, new TreeSet<>());
+            }
+
+            ArrayRef ar = (ArrayRef) r2la.from;
+            Local base = (Local) ar.getBase();
+            for (Integer i: localPTS.get(base)) {
+                if (arrayContentPTS.containsKey(i)) {
+                    flag |= localPTS.get(r2la.to).addAll(arrayContentPTS.get(i));
+                }
+            }
+        }
+        return flag;
+    }
+
+	private boolean runL2LAssign() {
+        boolean flag = false;
+        for (Local2LocalAssign ac : local2LocalAssigns) {
+
+            // if from is empty, skip
+            if (!localPTS.containsKey(ac.from)) {
+                continue;
+            }
+
+            // check to, and init it if empty
+            if (!localPTS.containsKey(ac.to)) {
+                localPTS.put(ac.to, new TreeSet<>());
+//					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
+            }
+
+            for (Integer pointee: localPTS.get(ac.from)) {
+                if (localPTS.get(ac.to).contains(pointee)) {
+                    continue;
+                }
+                dl.log(dl.intraProc && pointee > 0,"Mark %s -> %d\n", ac.to.getName(), pointee);
+            }
+            if (localPTS.get(ac.to).addAll(localPTS.get(ac.from))) {
+                flag = true;
+            }
+        }
+        return flag;
+    }
+
 	TreeSet<Integer> getPointsToSet(Local local) {
-		return pts.get(local);
+		return localPTS.get(local);
 	}
-	
 }
