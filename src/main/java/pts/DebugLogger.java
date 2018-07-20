@@ -18,4 +18,10 @@ public class DebugLogger {
             System.out.print(String.format(format, (Object[]) args));
         }
     }
+
+    void loge(boolean flag, String format, Object... args) {
+        if (debug_all && flag) {
+            System.err.print(String.format(format, (Object[]) args));
+        }
+    }
 }

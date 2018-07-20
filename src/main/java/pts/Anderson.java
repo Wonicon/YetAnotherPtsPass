@@ -9,9 +9,9 @@ import java.util.TreeSet;
 import soot.Local;
 import soot.jimple.Ref;
 
-class AssignConstraint {
+class Local2LocalAssign {
 	Local from, to;
-	AssignConstraint(Local from, Local to) {
+	Local2LocalAssign(Local from, Local to) {
 		this.from = from;
 		this.to = to;
 	}
@@ -37,6 +37,15 @@ class Local2RefAssign {
 	}
 }
 
+class Ref2RefAssign {
+	//
+    Ref from, to;
+    Ref2RefAssign(Ref from, Ref to) {
+        this.to = to;
+		this.from = from;
+	}
+}
+
 class NewConstraint {
 	Local to;
 	int allocId;
@@ -55,9 +64,9 @@ class ArrayConstraint {
 
 public class Anderson {
 
-	private List<AssignConstraint> assignConstraints = new ArrayList<>();
+	private List<Local2LocalAssign> local2LocalAssigns = new ArrayList<>();
 	void addAssignConstraint(Local from, Local to) {
-		assignConstraints.add(new AssignConstraint(from, to));
+		local2LocalAssigns.add(new Local2LocalAssign(from, to));
 	}
 
 	private List<NewConstraint> newConstraints = new ArrayList<>();
@@ -76,11 +85,18 @@ public class Anderson {
 	}
 
 	private List<Local2RefAssign> local2RefAssigns = new ArrayList<>();
-	void local2RefAssign(Local from, Ref to) {
+	void addLocal2RefAssign(Local from, Ref to) {
 		local2RefAssigns.add(new Local2RefAssign(from, to));
 	}
 
+	private List<Ref2RefAssign> ref2RefAssigns = new ArrayList<>();
+	void addRef2RefAssign(Ref from, Ref to) {
+		ref2RefAssigns.add(new Ref2RefAssign(from, to));
+	}
+
 	private Map<Local, TreeSet<Integer>> pts = new HashMap<>();
+
+    private Map<Integer, TreeSet<Local>> ppts = new HashMap<>();
 
 	void run() {
 		DebugLogger dl;
@@ -98,7 +114,7 @@ public class Anderson {
 		}
 		for (boolean flag = true; flag; ) {
 			flag = false;
-			for (AssignConstraint ac : assignConstraints) {
+			for (Local2LocalAssign ac : local2LocalAssigns) {
 				if (!pts.containsKey(ac.from)) {
 					continue;
 				}	

@@ -9,7 +9,6 @@ import java.util.Map.Entry;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-import com.sun.org.apache.xpath.internal.operations.And;
 import soot.Local;
 import soot.MethodOrMethodContext;
 import soot.Scene;
@@ -17,16 +16,11 @@ import soot.SceneTransformer;
 import soot.SootMethod;
 import soot.Unit;
 import soot.Value;
-import soot.grimp.internal.GAssignStmt;
 import soot.jimple.*;
 import soot.jimple.internal.JAssignStmt;
 import soot.jimple.toolkits.callgraph.ReachableMethods;
-import soot.shimple.PhiExpr;
-import soot.shimple.Shimple;
-import soot.shimple.ShimpleBody;
-import soot.toolkits.graph.BlockGraph;
-import soot.toolkits.graph.CompleteBlockGraph;
 import soot.util.queue.QueueReader;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 public class WholeProgramTransformer extends SceneTransformer {
 
@@ -70,38 +64,40 @@ public class WholeProgramTransformer extends SceneTransformer {
                     Object lop = ((DefinitionStmt)u).getLeftOp(),
                             rop = ((DefinitionStmt)u).getRightOp();
 
-                    if (rop instanceof NewExpr) {
-                        if (rop.toString().equals("new java.util.Properties")) {
-                            // This expr might be the end of user codes,
-                            // break to lessen outputs;
-                            breakFlag = true;
-                            break;
-                        }
-                        anderson.addNewConstraint(allocId, (Local)lop);
-                    }
-
-                    if (rop instanceof NewArrayExpr) {
-                        anderson.addNewConstraint(allocId, (Local)lop);
-                        // TODO: Add constraint for contents
-                        anderson.addArrayConstraint(allocId);
-                    }
-
                     if (u instanceof JAssignStmt) {
+                        if (rop instanceof NewExpr) {
+                            if (rop.toString().equals("new java.util.Properties")) {
+                                // This expr might be the end of user codes,
+                                // break to lessen outputs;
+                                breakFlag = true;
+                                break;
+                            }
+                            anderson.addNewConstraint(allocId, (Local)lop);
+                        } else if (rop instanceof NewArrayExpr) {
+                            anderson.addNewConstraint(allocId, (Local)lop);
+                            // TODO: Add constraint for contents
+                            anderson.addArrayConstraint(allocId);
 
-                        if (lop instanceof Local && rop instanceof Local) {
+                        } else if (lop instanceof Local && rop instanceof Local) {
                             anderson.addAssignConstraint((Local) rop, (Local)lop);
 
                         } else if (lop instanceof Local && rop instanceof Ref) {
-                            dl.log(dl.intraProc, rop.toString() + "\n");
                             anderson.addRef2LocalAssign((Ref) rop, (Local) lop);
-                            // TODO:
-//                            dl.log(dl.intraProc, .toString());
+
+                        } else if (lop instanceof Ref && rop instanceof Local) {
+                            anderson.addLocal2RefAssign((Local) rop, (Ref) lop);
+
+                        } else if (lop instanceof Ref && rop instanceof Ref) {
+                            anderson.addRef2RefAssign((Ref) rop, (Ref) lop);
+
+                        } else {
+                            dl.loge(dl.intraProc, "lop: %s, rop: %s\n",
+                                    lop.getClass().getSimpleName(), rop.getClass().getSimpleName());
+                            dl.loge(dl.debug_all,"Not implemented case, ignored!\n");
+//                            throw new NotImplementedException();
                         }
                     }
                 }
-//                if (u instanceof Return) {
-//
-//                }
             }
             if (breakFlag) {
                 break;
