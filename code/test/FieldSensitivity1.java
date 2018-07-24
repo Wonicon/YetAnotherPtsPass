@@ -24,7 +24,10 @@ public class FieldSensitivity1 {
 
     Benchmark.alloc(2);
     B b1 = new B();
+
+    Benchmark.alloc(5);
     A a = new A(b);
+
     a.f = b;
 
     Benchmark.alloc(3);
