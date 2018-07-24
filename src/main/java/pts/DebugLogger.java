@@ -21,13 +21,13 @@ public class DebugLogger {
 
     void log(boolean flag, String format, Object... args) {
         if (debug_all && flag) {
-            System.out.print(String.format(format, (Object[]) args));
+            System.out.println(String.format(format, (Object[]) args));
         }
     }
 
     void loge(boolean flag, String format, Object... args) {
         if (debug_all && flag) {
-            System.out.print(String.format(format, (Object[]) args));
+            System.out.println(String.format(format, (Object[]) args));
         }
     }
 }

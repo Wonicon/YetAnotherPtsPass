@@ -1,16 +1,17 @@
 package pts;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeSet;
+import java.util.*;
 
 import org.jboss.util.NotImplementedException;
 import soot.Local;
+import soot.Value;
 import soot.jimple.ArrayRef;
 import soot.jimple.InstanceFieldRef;
+import soot.jimple.InvokeExpr;
 import soot.jimple.Ref;
+import soot.shimple.PhiExpr;
+import soot.toolkits.scalar.Pair;
+import soot.toolkits.scalar.ValueUnitPair;
 
 class Local2LocalAssign {
 	Local from, to;
@@ -92,9 +93,14 @@ public class Anderson {
 		local2RefAssigns.add(new Local2RefAssign(from, to));
 	}
 
-	private Map<Local, TreeSet<Integer>> localPTS = new HashMap<>();
+	private List<Pair<PhiExpr, Local>> phi2Local = new ArrayList<>();
+    public void addPhi2Local(PhiExpr phi, Local lop) {
+        phi2Local.add(new Pair<>(phi, lop));
+    }
 
-    private Map<Integer, TreeSet<Integer>> arrayContentPTS = new HashMap<>();
+	private Map<Local, Set<Integer>> localPTS = new HashMap<>();
+
+    private Map<Integer, Set<Integer>> arrayContentPTS = new HashMap<>();
 
     private DebugLogger dl = new DebugLogger();
 
@@ -105,23 +111,55 @@ public class Anderson {
 
             }
             if (nc.allocId > 0) {
-                dl.log(dl.typePrint, "to class: %s\n", nc.to.getClass().getSimpleName());
-                dl.log(dl.intraProc, "Mark %s -> %d (Alloc)\n", nc.to.getName(), nc.allocId);
+                dl.log(dl.typePrint, "to class: %s", nc.to.getClass().getSimpleName());
+                dl.log(dl.intraProc, "Mark %s -> %d (Alloc)", nc.to.getName(), nc.allocId);
             }
             localPTS.get(nc.to).add(nc.allocId);
         }
         int round = 0;
 		for (boolean flag = true; flag; ) {
-		    dl.log(dl.intraProc, "Round = %d ----------------------\n", round);
+		    dl.log(dl.intraProc, "Round = %d ----------------------", round);
             flag = runL2LAssign();
             flag |= runL2RAssign();
             flag |= runR2LAssign();
-            dl.log(dl.intraProc, "Flag = %b\n", flag);
+            flag |= runPhi2LocalAssign();
+            dl.log(dl.intraProc, "Flag = %b", flag);
             round += 1;
 		}
 	}
 
-	private boolean baseInLocalPTS(ArrayRef ar) {
+    private boolean runPhi2LocalAssign() {
+	    boolean flag = false;
+	    for (Pair<PhiExpr, Local> pair : phi2Local) {
+	        PhiExpr phi = pair.getO1();
+	        Local dst = pair.getO2();
+
+	        // Init destination Local's PTS
+            if (!localPTS.containsKey(dst)) {
+                localPTS.put(dst, new TreeSet<>());
+            }
+
+            // Merge each phi's source into destination
+	        for (ValueUnitPair val : phi.getArgs()) {
+	            dl.log(dl.debug_all, "phi value: " + val.getValue());
+	            Value v = val.getValue();
+	            if (!(v instanceof Local)) {
+	                dl.log(dl.debug_all, "phi value type is " + v.getClass());
+	                continue;
+	            }
+                Local local = (Local) v;
+	            if (!localPTS.containsKey(local)) {
+	                dl.log(dl.debug_all, "phi source " + local.getName() + " does not have PTS");
+	                continue;
+                }
+
+                flag |= localPTS.get(dst).addAll(localPTS.get(local));
+            }
+        }
+        return flag;
+	}
+
+    private boolean baseInLocalPTS(ArrayRef ar) {
         if (ar.getBase() instanceof Local) {
             Local base = (Local) ar.getBase();
             return localPTS.containsKey(base);
@@ -165,7 +203,7 @@ public class Anderson {
                             if (arrayContentPTS.get(i).contains(pointee)) {
                                 continue;
                             }
-                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d\n",
+                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d",
                                     i, pointee);
                         }
 
@@ -173,7 +211,7 @@ public class Anderson {
                     }
 
                 } else {
-                    dl.loge(dl.intraProc, "base of array ref is not local!\n");
+                    dl.loge(dl.intraProc, "base of array ref is not local!");
                 }
 
             } else if (l2ra.to instanceof InstanceFieldRef) {
@@ -216,7 +254,7 @@ public class Anderson {
     private boolean runR2LAssign() {
         boolean flag = false;
         for (Ref2LocalAssign r2la: ref2LocalAssigns) {
-            dl.log(dl.constraintPrint, "%s = %s\n", r2la.to, r2la.from);
+            dl.log(dl.constraintPrint, "%s = %s", r2la.to, r2la.from);
 
             // check to, and init it if empty
             if (!localPTS.containsKey(r2la.to)) {
@@ -228,8 +266,7 @@ public class Anderson {
             if (r2la.from instanceof ArrayRef) {
                 ArrayRef ar = (ArrayRef) r2la.from;
                 if (!baseInLocalPTS(ar)) {
-                    dl.loge(dl.intraProc, "base of array ref is not local or" +
-                            " not in local PTS!\n");
+                    dl.loge(dl.intraProc, "base of array ref is not local or not in local PTS!");
                     continue;
                 }
                 boolean empty = true;
@@ -241,7 +278,7 @@ public class Anderson {
                     }
                 }
                 if (empty) {
-                    dl.loge(dl.intraProc, "point set of content of array not found array\n");
+                    dl.loge(dl.intraProc, "point set of content of array not found");
                     continue;
                 }
 
@@ -268,7 +305,7 @@ public class Anderson {
                     continue;
                 }
             } else {
-                dl.loge(dl.intraProc, "Ref type not implemented!\n");
+                dl.loge(dl.intraProc, "Ref type not implemented!");
                 throw new NotImplementedException();
             }
 
@@ -295,7 +332,7 @@ public class Anderson {
                         if (localPTS.get(r2la.to).contains(pointee)) {
                             continue;
                         }
-                        dl.log(dl.intraProc && pointee > 0, "Mark %s -> %d\n",
+                        dl.log(dl.intraProc && pointee > 0, "Mark %s -> %d",
                                 r2la.to.getName(), pointee);
                     }
 
@@ -322,13 +359,16 @@ public class Anderson {
                 continue;
             }
 
-
+            // check to, and init it if empty
+            if (!localPTS.containsKey(ac.to)) {
+                localPTS.put(ac.to, new TreeSet<>());
+            }
 
             for (Integer pointee: localPTS.get(ac.from)) {
                 if (localPTS.get(ac.to).contains(pointee)) {
                     continue;
                 }
-                dl.log(dl.intraProc && pointee > 0,"Mark %s -> %d\n", ac.to.getName(), pointee);
+                dl.log(dl.intraProc && pointee > 0,"Mark %s -> %d", ac.to.getName(), pointee);
             }
             if (localPTS.get(ac.to).addAll(localPTS.get(ac.from))) {
                 flag = true;
@@ -337,7 +377,19 @@ public class Anderson {
         return flag;
     }
 
-	TreeSet<Integer> getPointsToSet(Local local) {
+	Set<Integer> getPointsToSet(Local local) {
 		return localPTS.get(local);
 	}
+
+    public void addCallSite(InvokeExpr invoke) {
+	}
+
+    public void addReturn2RefAssign(InvokeExpr invoke, Ref lop) {
+    }
+
+    public void addReturn2LocalAssign(InvokeExpr invoke, Local lop) {
+    }
+
+    public void addPhi2Ref(PhiExpr phi, Ref lop) {
+    }
 }
