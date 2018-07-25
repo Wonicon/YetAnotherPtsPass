@@ -4,10 +4,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
-import java.util.TreeMap;
 
 import soot.Local;
 import soot.MethodOrMethodContext;
@@ -26,6 +24,10 @@ import soot.shimple.ShimpleBody;
 import soot.util.queue.QueueReader;
 
 public class WholeProgramTransformer extends SceneTransformer {
+    private Queue<SootMethod> methodToVisit = new LinkedList<>();
+
+    private Set<String> methodVisited = new TreeSet<>();
+
     private DebugLogger dl = new DebugLogger();
 
     private Map<Integer, Local> queries = new TreeMap<>();
@@ -43,11 +45,17 @@ public class WholeProgramTransformer extends SceneTransformer {
 
         boolean breakFlag = false;
 
+        methodToVisit.offer(Scene.v().getMainMethod());
+
         // Iterate over methods
-        while (qr.hasNext() && !breakFlag) {
-            SootMethod method = qr.next().method();
-            dl.log(dl.debug_all, "Visit method " + method.getName());
+        while (!methodToVisit.isEmpty()) {
+            SootMethod method = methodToVisit.poll();
+            methodVisited.add(method.toString());
+            // TODO Detect recursion!!!
+
+            dl.log(dl.debug_all, "Visit method " + method);
             if (!method.hasActiveBody()) {
+                dl.log(true, "Discard method " + method);
                 continue;
             }
 
@@ -104,7 +112,16 @@ public class WholeProgramTransformer extends SceneTransformer {
                     queries.put(id, (Local) v);
                     break;
                 default:
-                    anderson.addCallSite(ie);
+                    if (ie instanceof SpecialInvokeExpr) {
+                        dl.log(dl.debug_all, "Discard " + ie.getMethod());
+                    }
+                    else {
+                        anderson.addCallSite(ie);
+                        if (!methodVisited.contains(ie.getMethod().toString()) && !methodToVisit.contains(ie.getMethod())) {
+                            methodToVisit.offer(ie.getMethod());
+                            dl.log(dl.debug_all, "Prepare to visit method " + ie.getMethod());
+                        }
+                    }
                     // No need to pass return value
                     break;
             }
@@ -168,6 +185,10 @@ public class WholeProgramTransformer extends SceneTransformer {
         else if (rop instanceof InvokeExpr) {
             InvokeExpr invoke = (InvokeExpr) rop;
             anderson.addCallSite(invoke);
+            if (!methodVisited.contains(invoke.getMethod().toString()) && !methodToVisit.contains(invoke.getMethod())) {
+                methodToVisit.offer(invoke.getMethod());
+                dl.log(dl.debug_all, "Prepare to visit method " + invoke.getMethod().getName());
+            }
             if (lop instanceof Ref) {
                 anderson.addReturn2RefAssign(invoke, (Ref) lop);
             }
