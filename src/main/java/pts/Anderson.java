@@ -211,7 +211,7 @@ public class Anderson {
     }
 
     private boolean runUnderCallSite() {
-        dl.log(dl.debug_all, "Anderson on " + currentMethod.getName());
+        dl.log(dl.debug_all, "Anderson on " + currentMethod);
 
         if (!localPtsBySite.containsKey(currentCallSite)) {
             localPtsBySite.put(currentCallSite, new HashMap<>());

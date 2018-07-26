@@ -125,34 +125,30 @@ public class WholeProgramTransformer extends SceneTransformer {
             switch (ie.getMethod().toString()) {
                 case "<benchmark.internal.Benchmark: void alloc(int)>":
                     allocId = ((IntConstant) ie.getArgs().get(0)).value;
-                    break;
+                    return false;
                 case "<benchmark.internal.Benchmark: void test(int,java.lang.Object)>":
                     Value v = ie.getArgs().get(1);
                     int id = ((IntConstant) ie.getArgs().get(0)).value;
                     queries.put(id, (Local) v);
-                    break;
-                default:
-                    if (ie instanceof SpecialInvokeExpr) {
-                        dl.log(dl.debug_all, "Discard " + ie.getMethod());
-                    }
-                    else {
-                        if (!methodVisited.contains(ie.getMethod()) && !methodToVisit.contains(ie.getMethod())) {
-                            methodToVisit.offer(ie.getMethod());
-                            Anderson.pool.put(ie.getMethod(), new Anderson(ie.getMethod()));
-                            anderson.calleeList.add(Anderson.pool.get(ie.getMethod()));
-                            dl.log(dl.debug_all, "Prepare to visit method " + ie.getMethod());
-                        }
-                        Anderson.pool.get(ie.getMethod()).addCallSite(ie, method);
-                    }
-                    // No need to pass return value
-                    break;
+                    return false;
             }
+
+            if (!methodVisited.contains(ie.getMethod()) && !methodToVisit.contains(ie.getMethod())) {
+                methodToVisit.offer(ie.getMethod());
+                Anderson.pool.put(ie.getMethod(), new Anderson(ie.getMethod()));
+                anderson.calleeList.add(Anderson.pool.get(ie.getMethod()));
+                dl.log(dl.debug_all, "Prepare to visit method " + ie.getMethod());
+            }
+            Anderson.pool.get(ie.getMethod()).addCallSite(ie, method);
+            // No need to pass return value
         }
+
         if (u instanceof IdentityStmt && ((IdentityStmt) u).getRightOp() instanceof ParameterRef) {
             ParameterRef param = (ParameterRef) ((IdentityStmt) u).getRightOp();
             dl.log(dl.debug_all, "pass parameter " + param.getIndex());
             anderson.addParamAssign(param, (Local)((IdentityStmt) u).getLeftOp());
         }
+
         if (u instanceof DefinitionStmt) {
             dl.log(dl.disasm, "-> Definition stmt -> %s", u.getClass().getSimpleName());
 
@@ -160,6 +156,7 @@ public class WholeProgramTransformer extends SceneTransformer {
                 return dispatchAssignment((JAssignStmt) u);
             }
         }
+
         if (u instanceof ReturnStmt) {
             ReturnStmt rtn = (ReturnStmt) u;
             Value rtnVal = rtn.getOp();
