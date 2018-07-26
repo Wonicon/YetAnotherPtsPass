@@ -1,13 +1,17 @@
 package pts;
 
+import java.lang.reflect.Parameter;
 import java.util.*;
 
 import org.jboss.util.NotImplementedException;
+import polyglot.ext.param.types.Param;
 import soot.Local;
+import soot.SootMethod;
 import soot.Value;
 import soot.jimple.ArrayRef;
 import soot.jimple.InstanceFieldRef;
 import soot.jimple.InvokeExpr;
+import soot.jimple.ParameterRef;
 import soot.jimple.Ref;
 import soot.shimple.PhiExpr;
 import soot.toolkits.scalar.Pair;
@@ -66,10 +70,37 @@ class ArrayConstraint {
 	}
 }
 
+/**
+ * One anderson represents a method.
+ */
 public class Anderson {
+    public static final Map<SootMethod, Anderson> pool = new HashMap<>();
+
+    public final Map<Integer, Local> queries = new TreeMap<>();
+
+    // Temporary value to record the current method.
+    private SootMethod currentMethod = null;
+
+    /**
+     * This reference describes under which call site,
+     * the current method is invoked.
+     * It is used to get argument references, which are used to
+     * PTS that the parameters need.
+     */
+    private InvokeExpr currentCallSite = null;
+
+    public Anderson(SootMethod method) {
+        currentMethod = method;
+    }
+
+    public void addCallSite(InvokeExpr invoke, SootMethod caller) {
+        invokePTS.put(invoke, new TreeSet<>());
+        callers.put(invoke, caller);
+    }
 
 	private List<Local2LocalAssign> local2LocalAssigns = new ArrayList<>();
-	void addAssignConstraint(Local from, Local to) {
+
+    void addAssignConstraint(Local from, Local to) {
 		local2LocalAssigns.add(new Local2LocalAssign(from, to));
 	}
 
@@ -98,17 +129,57 @@ public class Anderson {
         phi2Local.add(new Pair<>(phi, lop));
     }
 
-	private Map<Local, Set<Integer>> localPTS = new HashMap<>();
+    private List<Pair<InvokeExpr, Local>> invoke2Local = new ArrayList<>();
+    public void addInvoke2Local(InvokeExpr src, Local dst) {
+        invoke2Local.add(new Pair<>(src, dst));
+    }
+
+    private List<Pair<ParameterRef, Local>> param2Local = new ArrayList<>();
+
+	private Map<Local, Set<Integer>> localPTS = null;
 
     private Map<Integer, Set<Integer>> arrayContentPTS = new HashMap<>();
 
+    /**
+     * Only the PTS of return value.
+     * TODO how to describe side effects?
+     */
+    private Map<InvokeExpr, Set<Integer>> invokePTS = new HashMap<>();
+    private Map<InvokeExpr, SootMethod> callers = new HashMap<>();
+    private Map<InvokeExpr, Map<Local, Set<Integer>>> localPtsBySite = new HashMap<>();
+
     private DebugLogger dl = new DebugLogger();
 
-	void run() {
-		for (NewConstraint nc : newConstraints) {
+    public void run() {
+        // For entry main
+        if (invokePTS.keySet().isEmpty()) {
+            runUnderCallSite();
+            return;
+        }
+
+        for (InvokeExpr callSite : invokePTS.keySet()) {
+            // Env setup
+            this.currentCallSite = callSite;
+
+            // Exec
+            runUnderCallSite();
+
+            // TODO Notify assignment.
+        }
+    }
+
+	private void runUnderCallSite() {
+        dl.log(dl.debug_all, "Anderson on " + currentMethod.getName());
+
+        if (!localPtsBySite.containsKey(currentCallSite)) {
+            localPtsBySite.put(currentCallSite, new HashMap<>());
+        }
+
+        localPTS = localPtsBySite.get(currentCallSite);
+
+        for (NewConstraint nc : newConstraints) {
             if (!localPTS.containsKey(nc.to)) {
                 localPTS.put(nc.to, new TreeSet<>());
-
             }
             if (nc.allocId > 0) {
                 dl.log(dl.typePrint, "to class: %s", nc.to.getClass().getSimpleName());
@@ -119,14 +190,70 @@ public class Anderson {
         int round = 0;
 		for (boolean flag = true; flag; ) {
 		    dl.log(dl.intraProc, "Round = %d ----------------------", round);
-            flag = runL2LAssign();
+            flag = false;
+            flag |= runParamAssign();
+		    flag |= runL2LAssign();
             flag |= runL2RAssign();
             flag |= runR2LAssign();
             flag |= runPhi2LocalAssign();
+            flag |= runInvoke2Local();
             dl.log(dl.intraProc, "Flag = %b", flag);
             round += 1;
 		}
 	}
+
+    private boolean runParamAssign() {
+        if (currentCallSite == null) {
+            return false;
+        }
+
+        boolean update = false;
+
+        for (Pair<ParameterRef, Local> pair : param2Local) {
+            ParameterRef src = pair.getO1();
+            Local dst = pair.getO2();
+
+            if (!localPTS.containsKey(dst)) {
+                localPTS.put(dst, new TreeSet<>());
+            }
+
+            int index = src.getIndex();
+            Value arg = currentCallSite.getArg(index);
+            if (arg instanceof Local) {
+                Set<Integer> pts = pool.get(callers.get(currentCallSite))
+                                       .getMergedLocalPTS()
+                                       .get(arg);
+                update |= localPTS.get(dst).addAll(pts);
+                dl.log(dl.param, "Update local %s's PTS from callsite local %s to %s",
+                        dst.getName(), ((Local) arg).getName(), localPTS.get(dst));
+            }
+            else {
+                dl.log(dl.param, "Unknown arg type:: " + arg.getClass());
+            }
+        }
+
+        return update;
+    }
+
+    private boolean runInvoke2Local() {
+	    boolean update = false;
+	    for (Pair<InvokeExpr, Local> pair : invoke2Local) {
+	        InvokeExpr src = pair.getO1();
+	        Local dst = pair.getO2();
+
+	        if (!localPTS.containsKey(dst)) {
+	            localPTS.put(dst, new TreeSet<>());
+            }
+
+            if (!invokePTS.containsKey(src)) {
+	            dl.log(dl.interProc, "InvokeExpr %s haven't have PTS yet", src.toString());
+	            continue;
+            }
+
+            update |= localPTS.get(dst).addAll(invokePTS.get(src));
+        }
+        return update;
+    }
 
     private boolean runPhi2LocalAssign() {
 	    boolean flag = false;
@@ -141,10 +268,9 @@ public class Anderson {
 
             // Merge each phi's source into destination
 	        for (ValueUnitPair val : phi.getArgs()) {
-	            dl.log(dl.debug_all, "phi value: " + val.getValue());
 	            Value v = val.getValue();
 	            if (!(v instanceof Local)) {
-	                dl.log(dl.debug_all, "phi value type is " + v.getClass());
+	                dl.log(dl.debug_all, "(discard) phi value type is " + v.getClass());
 	                continue;
 	            }
                 Local local = (Local) v;
@@ -378,18 +504,34 @@ public class Anderson {
     }
 
 	Set<Integer> getPointsToSet(Local local) {
-		return localPTS.get(local);
-	}
-
-    public void addCallSite(InvokeExpr invoke) {
+		return getMergedLocalPTS().get(local);
 	}
 
     public void addReturn2RefAssign(InvokeExpr invoke, Ref lop) {
     }
 
-    public void addReturn2LocalAssign(InvokeExpr invoke, Local lop) {
+    public void addPhi2Ref(PhiExpr phi, Ref lop) {
     }
 
-    public void addPhi2Ref(PhiExpr phi, Ref lop) {
+    public void addParamAssign(ParameterRef param, Local leftOp) {
+        param2Local.add(new Pair<>(param, leftOp));
+    }
+
+    /**
+     * TODO This is a trade off as we do not record the call stack
+     */
+    public Map<Local, Set<Integer>> getMergedLocalPTS() {
+        Map<Local, Set<Integer>> pts = new HashMap<>();
+        for (Map<Local, Set<Integer>> v : localPtsBySite.values()) {
+            for (Map.Entry<Local, Set<Integer>> e : v.entrySet()) {
+                pts.merge(e.getKey(), e.getValue(), (o, n) -> {
+                    Set<Integer> r = new TreeSet<>(o);
+                    r.addAll(n);
+                    return r;
+                });
+            }
+        }
+
+        return pts;
     }
 }

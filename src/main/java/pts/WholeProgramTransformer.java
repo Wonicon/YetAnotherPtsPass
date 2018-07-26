@@ -8,7 +8,6 @@ import java.util.*;
 import java.util.Map.Entry;
 
 import soot.Local;
-import soot.MethodOrMethodContext;
 import soot.Scene;
 import soot.SceneTransformer;
 import soot.SootMethod;
@@ -17,41 +16,37 @@ import soot.Value;
 import soot.jimple.*;
 import soot.jimple.internal.JAssignStmt;
 import soot.jimple.internal.JLengthExpr;
-import soot.jimple.toolkits.callgraph.ReachableMethods;
 import soot.shimple.PhiExpr;
 import soot.shimple.Shimple;
 import soot.shimple.ShimpleBody;
-import soot.util.queue.QueueReader;
 
 public class WholeProgramTransformer extends SceneTransformer {
     private Queue<SootMethod> methodToVisit = new LinkedList<>();
 
-    private Set<String> methodVisited = new TreeSet<>();
+    private Set<SootMethod> methodVisited = new HashSet<>();
 
     private DebugLogger dl = new DebugLogger();
 
-    private Map<Integer, Local> queries = new TreeMap<>();
+    private Map<Integer, Local> queries = null;
 
-    private Anderson anderson = new Anderson();
+    private Anderson anderson = null;
 
     private int allocId = -1;
 
+    private SootMethod method;
+
     @Override
     protected void internalTransform(String arg0, Map<String, String> arg1) {
-
-
-        ReachableMethods reachableMethods = Scene.v().getReachableMethods();
-        QueueReader<MethodOrMethodContext> qr = reachableMethods.listener();
-
-        boolean breakFlag = false;
-
-        methodToVisit.offer(Scene.v().getMainMethod());
+        SootMethod mainEntry = Scene.v().getMainMethod();
+        methodToVisit.offer(mainEntry);
+        Anderson.pool.put(mainEntry, new Anderson(mainEntry));
+        System.out.println("mainEntry " + mainEntry.hashCode());
 
         // Iterate over methods
         while (!methodToVisit.isEmpty()) {
-            SootMethod method = methodToVisit.poll();
-            methodVisited.add(method.toString());
-            // TODO Detect recursion!!!
+            method = methodToVisit.poll();
+            System.out.println("method " + method.hashCode());
+            methodVisited.add(method);
 
             dl.log(dl.debug_all, "Visit method " + method);
             if (!method.hasActiveBody()) {
@@ -59,33 +54,47 @@ public class WholeProgramTransformer extends SceneTransformer {
                 continue;
             }
 
+            if (Anderson.pool.containsKey(method)) {
+                System.out.println("contain!");
+            }
+            anderson = Anderson.pool.get(method);
+            queries = anderson.queries;
+            // TODO Detect recursion!!!
+
             // Get SSA format
             ShimpleBody sb = Shimple.v().newBody(method.getActiveBody());
 
             for (Unit u : sb.getUnits()) {
                 dl.log(dl.intraProc, "Visit unit:: " + u.toString() + ": " + u.getClass().getName());
-                breakFlag = dispatchUnit(u);
-                if (breakFlag) {
+                if (dispatchUnit(u)) {
                     break;
                 }
             }
+
+            anderson = null;
+            queries = null;
         }
 
-        anderson.run();
+        // TODO many anderson run()
+        for (Anderson andersonPerMethod : Anderson.pool.values()) {
+            andersonPerMethod.run();
+        }
 
         // Format result
         StringBuilder answer = new StringBuilder();
-        for (Entry<Integer, Local> q : queries.entrySet()) {
-            Set<Integer> result = anderson.getPointsToSet(q.getValue());
-            if (result != null) {
-                answer.append(q.getKey().toString()).append(":");
-                for (Integer i : result) {
-                    answer.append(" ").append(i.toString());
+        for (Anderson ads : Anderson.pool.values()) {
+            for (Entry<Integer, Local> q : ads.queries.entrySet()) {
+                Set<Integer> result = ads.getPointsToSet(q.getValue());
+                if (result != null) {
+                    answer.append(q.getKey().toString()).append(":");
+                    for (Integer i : result) {
+                        answer.append(" ").append(i.toString());
+                    }
+                    answer.append("\n");
                 }
-                answer.append("\n");
-            }
-            else {
-                dl.log(dl.debug_all, "empty result for " + q.getValue());
+                else {
+                    dl.log(dl.debug_all, "empty result for " + q.getValue());
+                }
             }
         }
 
@@ -106,7 +115,6 @@ public class WholeProgramTransformer extends SceneTransformer {
                     allocId = ((IntConstant) ie.getArgs().get(0)).value;
                     break;
                 case "<benchmark.internal.Benchmark: void test(int,java.lang.Object)>":
-                    allocId = ((IntConstant) ie.getArgs().get(0)).value;
                     Value v = ie.getArgs().get(1);
                     int id = ((IntConstant) ie.getArgs().get(0)).value;
                     queries.put(id, (Local) v);
@@ -116,11 +124,12 @@ public class WholeProgramTransformer extends SceneTransformer {
                         dl.log(dl.debug_all, "Discard " + ie.getMethod());
                     }
                     else {
-                        anderson.addCallSite(ie);
-                        if (!methodVisited.contains(ie.getMethod().toString()) && !methodToVisit.contains(ie.getMethod())) {
+                        if (!methodVisited.contains(ie.getMethod()) && !methodToVisit.contains(ie.getMethod())) {
                             methodToVisit.offer(ie.getMethod());
+                            Anderson.pool.put(ie.getMethod(), new Anderson(ie.getMethod()));
                             dl.log(dl.debug_all, "Prepare to visit method " + ie.getMethod());
                         }
+                        Anderson.pool.get(ie.getMethod()).addCallSite(ie, method);
                     }
                     // No need to pass return value
                     break;
@@ -129,14 +138,13 @@ public class WholeProgramTransformer extends SceneTransformer {
         if (u instanceof IdentityStmt && ((IdentityStmt) u).getRightOp() instanceof ParameterRef) {
             ParameterRef param = (ParameterRef) ((IdentityStmt) u).getRightOp();
             dl.log(dl.debug_all, "pass parameter " + param.getIndex());
+            anderson.addParamAssign(param, (Local)((IdentityStmt) u).getLeftOp());
         }
         if (u instanceof DefinitionStmt) {
             dl.log(dl.disasm, "-> Definition stmt -> %s", u.getClass().getSimpleName());
 
             if (u instanceof JAssignStmt) {
-                if (dispatchAssignment((JAssignStmt) u)) {
-                    return true;
-                };
+                return dispatchAssignment((JAssignStmt) u);
             }
         }
 
@@ -184,16 +192,19 @@ public class WholeProgramTransformer extends SceneTransformer {
         }
         else if (rop instanceof InvokeExpr) {
             InvokeExpr invoke = (InvokeExpr) rop;
-            anderson.addCallSite(invoke);
-            if (!methodVisited.contains(invoke.getMethod().toString()) && !methodToVisit.contains(invoke.getMethod())) {
-                methodToVisit.offer(invoke.getMethod());
+            SootMethod callee = invoke.getMethod();
+            if (!methodVisited.contains(callee) && !methodToVisit.contains(callee)) {
+                methodToVisit.offer(callee);
+                Anderson.pool.put(callee, new Anderson(callee));
                 dl.log(dl.debug_all, "Prepare to visit method " + invoke.getMethod().getName());
             }
+            Anderson.pool.get(callee).addCallSite(invoke, method);
             if (lop instanceof Ref) {
+                dl.log(true, "HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIT");
                 anderson.addReturn2RefAssign(invoke, (Ref) lop);
             }
             else if (lop instanceof Local) {
-                anderson.addReturn2LocalAssign(invoke, (Local) lop);
+                anderson.addInvoke2Local(invoke, (Local) lop);
             }
             else {
                 dl.loge(dl.debug_all, "Unexpected left value type: " + lop.getClass().getName());
