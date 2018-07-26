@@ -88,6 +88,7 @@ public class Anderson {
      * PTS that the parameters need.
      */
     private InvokeExpr currentCallSite = null;
+    private List<Value> returnList = new ArrayList<>();
 
     public Anderson(SootMethod method) {
         currentMethod = method;
@@ -148,9 +149,17 @@ public class Anderson {
     private Map<InvokeExpr, SootMethod> callers = new HashMap<>();
     private Map<InvokeExpr, Map<Local, Set<Integer>>> localPtsBySite = new HashMap<>();
 
+    public final List<Anderson> calleeList = new ArrayList<>();
+
+    private boolean enable = true;
+
+    public boolean enabled() { return enable; }
+
     private DebugLogger dl = new DebugLogger();
 
     public void run() {
+        enable = false;
+
         // For entry main
         if (invokePTS.keySet().isEmpty()) {
             runUnderCallSite();
@@ -162,13 +171,46 @@ public class Anderson {
             this.currentCallSite = callSite;
 
             // Exec
-            runUnderCallSite();
+            boolean update = runUnderCallSite();
 
+            if (update) {
+                // Enable all callee.
+                for (Anderson pass : calleeList) {
+                    pass.wakeup();
+                }
+            }
             // TODO Notify assignment.
         }
     }
 
-	private void runUnderCallSite() {
+    private boolean runReturn() {
+        for (Value rtn : returnList) {
+            if (rtn instanceof Local) {
+                Local local = (Local) rtn;
+                Set<Integer> pts = localPTS.get(local);
+                if (!invokePTS.containsKey(currentCallSite)) {
+                    invokePTS.put(currentCallSite, new TreeSet<>());
+                }
+                boolean update = invokePTS.get(currentCallSite).addAll(pts);
+                if (update) {
+                    Anderson.pool.get(callers.get(currentCallSite)).wakeup();
+                }
+            }
+            else {
+                dl.log(true, "Unkonw return value type " + rtn.getClass());
+            }
+        }
+
+        // Return does not interfere the analysis inside the method,
+        // it is only used to wake up callers.
+        return false;
+    }
+
+    protected void wakeup() {
+        enable = true;
+    }
+
+    private boolean runUnderCallSite() {
         dl.log(dl.debug_all, "Anderson on " + currentMethod.getName());
 
         if (!localPtsBySite.containsKey(currentCallSite)) {
@@ -188,6 +230,7 @@ public class Anderson {
             localPTS.get(nc.to).add(nc.allocId);
         }
         int round = 0;
+        boolean global_update = false;
 		for (boolean flag = true; flag; ) {
 		    dl.log(dl.intraProc, "Round = %d ----------------------", round);
             flag = false;
@@ -197,9 +240,13 @@ public class Anderson {
             flag |= runR2LAssign();
             flag |= runPhi2LocalAssign();
             flag |= runInvoke2Local();
+            flag |= runReturn();
             dl.log(dl.intraProc, "Flag = %b", flag);
+            global_update |= flag;
             round += 1;
 		}
+
+		return global_update;
 	}
 
     private boolean runParamAssign() {
@@ -222,7 +269,7 @@ public class Anderson {
             if (arg instanceof Local) {
                 Set<Integer> pts = pool.get(callers.get(currentCallSite))
                                        .getMergedLocalPTS()
-                                       .get(arg);
+                                       .getOrDefault(arg, new TreeSet<>());
                 update |= localPTS.get(dst).addAll(pts);
                 dl.log(dl.param, "Update local %s's PTS from callsite local %s to %s",
                         dst.getName(), ((Local) arg).getName(), localPTS.get(dst));
@@ -245,12 +292,8 @@ public class Anderson {
 	            localPTS.put(dst, new TreeSet<>());
             }
 
-            if (!invokePTS.containsKey(src)) {
-	            dl.log(dl.interProc, "InvokeExpr %s haven't have PTS yet", src.toString());
-	            continue;
-            }
-
-            update |= localPTS.get(dst).addAll(invokePTS.get(src));
+            Set<Integer> pts = Anderson.pool.get(src.getMethod()).invokePTS.getOrDefault(src, new TreeSet<>());
+            update |= localPTS.get(dst).addAll(pts);
         }
         return update;
     }
@@ -533,5 +576,9 @@ public class Anderson {
         }
 
         return pts;
+    }
+
+    public void addReturn(Local local) {
+        this.returnList.add(local);
     }
 }

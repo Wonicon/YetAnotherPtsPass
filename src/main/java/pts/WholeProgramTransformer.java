@@ -76,8 +76,20 @@ public class WholeProgramTransformer extends SceneTransformer {
         }
 
         // TODO many anderson run()
-        for (Anderson andersonPerMethod : Anderson.pool.values()) {
-            andersonPerMethod.run();
+        boolean next = true;
+        while (next) {
+            next = false;
+            for (Anderson andersonPerMethod : Anderson.pool.values()) {
+                if (andersonPerMethod.enabled()) {
+                    andersonPerMethod.run();
+                }
+            }
+            // Some already runned anderson is waken by others.
+            for (Anderson anderson : Anderson.pool.values()) {
+                if (anderson.enabled()) {
+                    next = true;
+                }
+            }
         }
 
         // Format result
@@ -127,6 +139,7 @@ public class WholeProgramTransformer extends SceneTransformer {
                         if (!methodVisited.contains(ie.getMethod()) && !methodToVisit.contains(ie.getMethod())) {
                             methodToVisit.offer(ie.getMethod());
                             Anderson.pool.put(ie.getMethod(), new Anderson(ie.getMethod()));
+                            anderson.calleeList.add(Anderson.pool.get(ie.getMethod()));
                             dl.log(dl.debug_all, "Prepare to visit method " + ie.getMethod());
                         }
                         Anderson.pool.get(ie.getMethod()).addCallSite(ie, method);
@@ -145,6 +158,14 @@ public class WholeProgramTransformer extends SceneTransformer {
 
             if (u instanceof JAssignStmt) {
                 return dispatchAssignment((JAssignStmt) u);
+            }
+        }
+        if (u instanceof ReturnStmt) {
+            ReturnStmt rtn = (ReturnStmt) u;
+            Value rtnVal = rtn.getOp();
+            if (rtnVal instanceof Local) {
+                Local local = (Local) rtnVal;
+                anderson.addReturn(local);
             }
         }
 
@@ -196,6 +217,7 @@ public class WholeProgramTransformer extends SceneTransformer {
             if (!methodVisited.contains(callee) && !methodToVisit.contains(callee)) {
                 methodToVisit.offer(callee);
                 Anderson.pool.put(callee, new Anderson(callee));
+                anderson.calleeList.add(Anderson.pool.get(callee));
                 dl.log(dl.debug_all, "Prepare to visit method " + invoke.getMethod().getName());
             }
             Anderson.pool.get(callee).addCallSite(invoke, method);
