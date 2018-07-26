@@ -110,11 +110,6 @@ public class Anderson {
 		newConstraints.add(new NewConstraint(alloc, to));
 	}
 
-	private List<ArrayConstraint> arrayConstraints = new ArrayList<>();
-	void addArrayConstraint(int alloc) {
-		arrayConstraints.add(new ArrayConstraint(alloc));
-	}
-
 	private List<Ref2LocalAssign> ref2LocalAssigns = new ArrayList<>();
 	void addRef2LocalAssign(Ref from, Local to) {
 		ref2LocalAssigns.add(new Ref2LocalAssign(from, to));

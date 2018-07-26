@@ -193,8 +193,6 @@ public class WholeProgramTransformer extends SceneTransformer {
         }
         else if (rop instanceof NewArrayExpr) {
             anderson.addNewConstraint(allocId, (Local)lop);
-            // TODO: Add constraint for contents
-            anderson.addArrayConstraint(allocId);
         }
         else if (lop instanceof Local && rop instanceof Local) {
             anderson.addAssignConstraint((Local) rop, (Local)lop);
