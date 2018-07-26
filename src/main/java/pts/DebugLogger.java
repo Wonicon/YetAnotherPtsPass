@@ -7,14 +7,16 @@ public class DebugLogger {
     boolean disasm;
     boolean typePrint;
     boolean constraintPrint;
+    boolean fieldSensitive;
 
     DebugLogger() {
         debug_all = true;
         interProc = false;
-        intraProc = true;
+        intraProc = false;
         disasm = false;
         typePrint = false;
         constraintPrint = false;
+        fieldSensitive = true;
     }
 
     void log(boolean flag, String format, Object... args) {
@@ -25,7 +27,7 @@ public class DebugLogger {
 
     void loge(boolean flag, String format, Object... args) {
         if (debug_all && flag) {
-            System.err.print(String.format(format, (Object[]) args));
+            System.out.print(String.format(format, (Object[]) args));
         }
     }
 }

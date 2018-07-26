@@ -9,6 +9,7 @@ import java.util.TreeSet;
 import org.jboss.util.NotImplementedException;
 import soot.Local;
 import soot.jimple.ArrayRef;
+import soot.jimple.InstanceFieldRef;
 import soot.jimple.Ref;
 
 class Local2LocalAssign {
@@ -128,16 +129,28 @@ public class Anderson {
         return false;
     }
 
+    private boolean baseInLocalPTS(InstanceFieldRef ifr) {
+        if (ifr.getBase() instanceof Local) {
+            Local base = (Local) ifr.getBase();
+            return localPTS.containsKey(base);
+        }
+        return false;
+    }
+
     private boolean runL2RAssign() {
+        dl.log(dl.fieldSensitive,"reach here, l2ra  1!\n");
         boolean flag = false;
         for (Local2RefAssign l2ra: local2RefAssigns) {
+            dl.log(dl.fieldSensitive,"reach here, l2ra  2!\n");
             dl.log(dl.constraintPrint, "%s = %s\n", l2ra.to, l2ra.from);
+            dl.log(dl.fieldSensitive, "%s = %s\n", l2ra.to.getClass(), l2ra.from);
             // if from is empty, skip
             if (!localPTS.containsKey(l2ra.from)) {
                 continue;
             }
-
+            dl.log(dl.fieldSensitive,"reach here, l2ra  after !\n");
             if (l2ra.to instanceof ArrayRef) {
+                dl.log(dl.fieldSensitive,"reach here, l2ra  ArrayRef!\n");
                 ArrayRef ar = (ArrayRef) l2ra.to;
 
                 if (baseInLocalPTS(ar)) {
@@ -163,8 +176,37 @@ public class Anderson {
                     dl.loge(dl.intraProc, "base of array ref is not local!\n");
                 }
 
-            } else {
-                dl.loge(dl.intraProc, "Ref type not implemented!\n");
+            } else if (l2ra.to instanceof InstanceFieldRef) {
+                dl.log(dl.fieldSensitive,"reach here, l2ra instancefieldref!\n");
+                InstanceFieldRef ifr = (InstanceFieldRef) l2ra.to;
+
+                if (baseInLocalPTS(ifr)) {
+                    Local base = (Local) ifr.getBase();
+                    dl.log(dl.fieldSensitive,base.toString()+"=====================\n");
+                    for (Integer i: localPTS.get(base)) {
+                        // check to, init it if empty
+                        if (!arrayContentPTS.containsKey(i)) {
+                            arrayContentPTS.put(i, new TreeSet<>());
+                        }
+
+                        for (Integer pointee: localPTS.get(l2ra.from)) {
+                            if (arrayContentPTS.get(i).contains(pointee)) {
+                                continue;
+                            }
+                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d\n",
+                                    i, pointee);
+                        }
+
+                        flag |= arrayContentPTS.get(i).addAll(localPTS.get(l2ra.from));
+                    }
+
+                } else {
+                    dl.loge(dl.intraProc, "base of array ref is not local!\n");
+                }
+
+            }
+            else {
+                dl.loge(dl.fieldSensitive, "Ref type not implemented!\n");
                 throw new NotImplementedException();
             }
         }
@@ -175,6 +217,12 @@ public class Anderson {
         boolean flag = false;
         for (Ref2LocalAssign r2la: ref2LocalAssigns) {
             dl.log(dl.constraintPrint, "%s = %s\n", r2la.to, r2la.from);
+
+            // check to, and init it if empty
+            if (!localPTS.containsKey(r2la.to)) {
+                localPTS.put(r2la.to, new TreeSet<>());
+                //					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
+            }
 
             // if from is empty, skip
             if (r2la.from instanceof ArrayRef) {
@@ -193,10 +241,32 @@ public class Anderson {
                     }
                 }
                 if (empty) {
-                    dl.loge(dl.intraProc, "point set of content of array not found\n");
+                    dl.loge(dl.intraProc, "point set of content of array not found array\n");
                     continue;
                 }
 
+            } else if (r2la.from instanceof InstanceFieldRef) {
+//                dl.log(dl.fieldSensitive,"reach here, r2la instancefieldref first!\n");
+                InstanceFieldRef ifr = (InstanceFieldRef) r2la.from;
+                if (!baseInLocalPTS(ifr)) {
+                    dl.loge(dl.intraProc, "base of array ref is not local or" +
+                            " not in local PTS!\n");
+                    continue;
+                }
+                boolean empty = true;
+                Local base = (Local) ifr.getBase();
+                dl.log(dl.fieldSensitive," r2l field base is : %s, localPTS.get(base) is: %s\n", base, localPTS.get(base).toString());
+                for (Integer i: localPTS.get(base)) {
+                    //dl.log(dl.fieldSensitive, "containsKey is %b, is Empty is %b\n", arrayContentPTS.containsKey(i), arrayContentPTS.get(i).isEmpty());
+                    if (arrayContentPTS.containsKey(i) &&
+                            !arrayContentPTS.get(i).isEmpty()) {
+                        empty = false;
+                    }
+                }
+                if (empty) {
+                    dl.loge(dl.intraProc, "point set of content of array not found field\n");
+                    continue;
+                }
             } else {
                 dl.loge(dl.intraProc, "Ref type not implemented!\n");
                 throw new NotImplementedException();
@@ -207,8 +277,18 @@ public class Anderson {
                 localPTS.put(r2la.to, new TreeSet<>());
             }
 
-            ArrayRef ar = (ArrayRef) r2la.from;
-            Local base = (Local) ar.getBase();
+            Local base;
+            if (r2la.from instanceof ArrayRef)
+            {
+                ArrayRef ar = (ArrayRef) r2la.from;
+                base = (Local) ar.getBase();
+            } else if (r2la.from instanceof InstanceFieldRef) {
+                InstanceFieldRef ifr = (InstanceFieldRef) r2la.from;
+                base = (Local) ifr.getBase();
+            } else {
+                base = null;
+            }
+
             for (Integer i: localPTS.get(base)) {
                 if (arrayContentPTS.containsKey(i)) {
                     for (Integer pointee: arrayContentPTS.get(i)) {
@@ -231,16 +311,18 @@ public class Anderson {
         for (Local2LocalAssign ac : local2LocalAssigns) {
             dl.log(dl.constraintPrint, "%s = %s\n", ac.to, ac.from);
 
+            // check to, and init it if empty
+            if (!localPTS.containsKey(ac.to)) {
+                localPTS.put(ac.to, new TreeSet<>());
+                //					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
+            }
+
             // if from is empty, skip
             if (!localPTS.containsKey(ac.from)) {
                 continue;
             }
 
-            // check to, and init it if empty
-            if (!localPTS.containsKey(ac.to)) {
-                localPTS.put(ac.to, new TreeSet<>());
-//					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
-            }
+
 
             for (Integer pointee: localPTS.get(ac.from)) {
                 if (localPTS.get(ac.to).contains(pointee)) {
