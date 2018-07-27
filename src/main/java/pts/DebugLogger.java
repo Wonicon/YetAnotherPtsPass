@@ -9,6 +9,7 @@ public class DebugLogger {
     boolean constraintPrint;
     boolean fieldSensitive;
     public boolean param;
+    public boolean env;
 
     DebugLogger() {
         debug_all = true;
@@ -19,6 +20,7 @@ public class DebugLogger {
         constraintPrint = false;
         fieldSensitive = true;
         param = true;
+        env = true;
     }
 
     void log(boolean flag, String format, Object... args) {

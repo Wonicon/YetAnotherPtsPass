@@ -19,6 +19,9 @@ import soot.jimple.internal.JLengthExpr;
 import soot.shimple.PhiExpr;
 import soot.shimple.Shimple;
 import soot.shimple.ShimpleBody;
+import soot.toolkits.graph.Block;
+import soot.toolkits.graph.BlockGraph;
+import soot.toolkits.graph.CompleteBlockGraph;
 
 public class WholeProgramTransformer extends SceneTransformer {
     private Queue<SootMethod> methodToVisit = new LinkedList<>();
@@ -34,6 +37,15 @@ public class WholeProgramTransformer extends SceneTransformer {
     private int allocId = -1;
 
     private SootMethod method;
+
+    private List<MemEnv> memEnvList;
+
+    private MemEnv genMemEnv()
+    {
+        MemEnv env = new MemEnv();
+        memEnvList.add(env);
+        return env;
+    }
 
     @Override
     protected void internalTransform(String arg0, Map<String, String> arg1) {
@@ -59,13 +71,18 @@ public class WholeProgramTransformer extends SceneTransformer {
 
             // Get SSA format
             ShimpleBody sb = Shimple.v().newBody(method.getActiveBody());
+            BlockGraph g = new CompleteBlockGraph(sb);
 
-            for (Unit u : sb.getUnits()) {
-                dl.log(dl.intraProc, "Visit unit:: " + u.toString() + ": " + u.getClass().getName());
-                if (dispatchUnit(u)) {
-                    break;
+            for (Block blk : g.getBlocks()) {
+                for (Unit u : blk.getBody().getUnits()) {
+                    dl.log(dl.intraProc, "Visit unit:: " + u.toString() + ": " + u.getClass().getName());
+                    if (dispatchUnit(u)) {
+                        break;
+                    }
                 }
             }
+
+            buildEnvChain(g);
 
             anderson = null;
             queries = null;
@@ -84,6 +101,7 @@ public class WholeProgramTransformer extends SceneTransformer {
                 next |= andersonPerMethod.enabled();
             }
 
+            /*
             dl.log(dl.debug_all, "HEAP SUMMARY >>>");
             for (Entry<Integer, Set<Integer>> entry : Anderson.arrayContentPTS.entrySet()) {
                 System.out.print(entry.getKey() + " ->");
@@ -92,6 +110,7 @@ public class WholeProgramTransformer extends SceneTransformer {
                 }
                 System.out.println();
             }
+            */
         }
 
         // Format result
@@ -249,5 +268,101 @@ public class WholeProgramTransformer extends SceneTransformer {
         }
 
         return false;
+    }
+
+    private void buildEnvChain(BlockGraph g)
+    {
+        Anderson anderson = Anderson.pool.get(method);
+        memEnvList = anderson.memEnvList;
+
+        if (g.getHeads().size() != 1) {
+            dl.loge(dl.env, "Oops, a method has multiple entrance");
+            System.exit(-1);
+        }
+
+        Map<Block, MemEnv> envOut = new HashMap<>(), envIn = new HashMap<>();
+
+        // Generate env out for each block.
+        for (Block blk : g.getBlocks()) {
+            envOut.put(blk, genMemEnv());
+        }
+
+        // Generate env in for each block.
+        for (Block blk : g.getBlocks()) {
+            MemEnv in = genMemEnv();
+            for (Block pred : blk.getPreds()) {
+                in.addParent(envOut.get(pred));
+            }
+            if (blk.getPreds().size() == 0) {
+                anderson.entryEnv = in;
+            }
+            envIn.put(blk, in);
+        }
+
+        // Dispatch inst
+        for (Block block : g.getBlocks()) {
+            MemEnv currEnv = envIn.get(block);
+            for (Unit u : block.getBody().getUnits()) {
+                if (u instanceof InvokeStmt) {
+                    InvokeStmt stmt = (InvokeStmt) u;
+                    MemEnv env = genMemEnv();
+                    // chain
+                    dl.log(dl.debug_all, "Handle " + u);
+                    if (currEnv == null) {
+                        System.out.println("fuck you");
+                    }
+                    System.out.println(stmt.getInvokeExpr().hashCode());
+                    Anderson.expr2EnvIn.put(stmt.getInvokeExpr(), currEnv);
+                    Anderson.expr2EnvOut.put(stmt.getInvokeExpr(), env);
+                    env.addParent(currEnv);
+                    envOut.get(block).resetParent();
+                    envOut.get(block).addParent(env);
+                    currEnv = env;
+                }
+
+                if (u instanceof ReturnStmt) {
+                    ReturnStmt rtn = (ReturnStmt) u;
+                    Anderson.rtn2EnvIn.put(rtn.getOp(), currEnv);
+                }
+
+                if (u instanceof ReturnVoidStmt) {
+                    anderson.voidReturnEnvIn.add(currEnv);
+                }
+
+                if (!(u instanceof AssignStmt)) {
+                    continue;
+                }
+
+                AssignStmt assign = (AssignStmt) u;
+                Value lop = assign.getLeftOp(), rop = assign.getRightOp();
+                if (lop instanceof Ref) {
+                    Ref ref = (Ref) lop;
+                    MemEnv env = genMemEnv();
+                    // chain
+                    Anderson.ref2EnvIn.put(ref, currEnv);
+                    Anderson.ref2EnvOut.put(ref, env);
+                    env.addParent(currEnv);
+                    envOut.get(block).resetParent();
+                    envOut.get(block).addParent(env);
+                    currEnv = env;
+                }
+                else if (rop instanceof Ref) {
+                    Ref ref = (Ref) rop;
+                    // partial chain
+                    Anderson.ref2EnvIn.put(ref, currEnv);
+                }
+                else if (rop instanceof InvokeExpr) {
+                    InvokeExpr invoke = (InvokeExpr) rop;
+                    MemEnv env = genMemEnv();
+                    // chain
+                    Anderson.expr2EnvIn.put(invoke, currEnv);
+                    Anderson.expr2EnvOut.put(invoke, env);
+                    env.addParent(currEnv);
+                    envOut.get(block).resetParent();
+                    envOut.get(block).addParent(env);
+                    currEnv = env;
+                }
+            }
+        }
     }
 }
