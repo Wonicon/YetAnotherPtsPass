@@ -45,7 +45,6 @@ public class WholeProgramTransformer extends SceneTransformer {
         // Iterate over methods
         while (!methodToVisit.isEmpty()) {
             method = methodToVisit.poll();
-            System.out.println("method " + method.hashCode());
             methodVisited.add(method);
 
             dl.log(dl.debug_all, "Visit method " + method);
@@ -54,9 +53,6 @@ public class WholeProgramTransformer extends SceneTransformer {
                 continue;
             }
 
-            if (Anderson.pool.containsKey(method)) {
-                System.out.println("contain!");
-            }
             anderson = Anderson.pool.get(method);
             queries = anderson.queries;
             // TODO Detect recursion!!!
@@ -77,18 +73,24 @@ public class WholeProgramTransformer extends SceneTransformer {
 
         // TODO many anderson run()
         boolean next = true;
-        while (next) {
+        for (int round = 0; next; round++) {
             next = false;
+            dl.log(dl.debug_all, "Global round " + round);
             for (Anderson andersonPerMethod : Anderson.pool.values()) {
-                if (andersonPerMethod.enabled()) {
-                    andersonPerMethod.run();
-                }
+                next |= andersonPerMethod.run();
             }
-            // Some already runned anderson is waken by others.
-            for (Anderson anderson : Anderson.pool.values()) {
-                if (anderson.enabled()) {
-                    next = true;
+
+            for (Anderson andersonPerMethod : Anderson.pool.values()) {
+                next |= andersonPerMethod.enabled();
+            }
+
+            dl.log(dl.debug_all, "HEAP SUMMARY >>>");
+            for (Entry<Integer, Set<Integer>> entry : Anderson.arrayContentPTS.entrySet()) {
+                System.out.print(entry.getKey() + " ->");
+                for (Integer i : entry.getValue()) {
+                    System.out.print(" " + i);
                 }
+                System.out.println();
             }
         }
 
@@ -121,7 +123,6 @@ public class WholeProgramTransformer extends SceneTransformer {
     private boolean dispatchUnit(Unit u) {
         if (u instanceof InvokeStmt) {
             InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
-            dl.log(dl.interProc, "invoke method " + ie.getMethod().getName());
             switch (ie.getMethod().toString()) {
                 case "<benchmark.internal.Benchmark: void alloc(int)>":
                     allocId = ((IntConstant) ie.getArgs().get(0)).value;
@@ -143,10 +144,20 @@ public class WholeProgramTransformer extends SceneTransformer {
             // No need to pass return value
         }
 
-        if (u instanceof IdentityStmt && ((IdentityStmt) u).getRightOp() instanceof ParameterRef) {
-            ParameterRef param = (ParameterRef) ((IdentityStmt) u).getRightOp();
-            dl.log(dl.debug_all, "pass parameter " + param.getIndex());
-            anderson.addParamAssign(param, (Local)((IdentityStmt) u).getLeftOp());
+        if (u instanceof IdentityStmt) {
+            IdentityStmt stmt = (IdentityStmt) u;
+
+            if (stmt.getRightOp() instanceof ParameterRef) {
+                ParameterRef param = (ParameterRef) ((IdentityStmt) u).getRightOp();
+                dl.log(dl.debug_all, "pass parameter " + param.getIndex());
+                anderson.addParamAssign(param, (Local) ((IdentityStmt) u).getLeftOp());
+            }
+
+            if (stmt.getRightOp() instanceof ThisRef) {
+                ThisRef thisRef = (ThisRef) stmt.getRightOp();
+                dl.log(dl.debug_all, "pass this ");
+                anderson.addThisAssign(thisRef, (Local)stmt.getLeftOp());
+            }
         }
 
         if (u instanceof DefinitionStmt) {
@@ -201,6 +212,7 @@ public class WholeProgramTransformer extends SceneTransformer {
             anderson.addRef2LocalAssign((Ref) rop, (Local) lop);
         }
         else if (lop instanceof Ref && rop instanceof Local) {
+            dl.log(dl.debug_all, "add local to ref");
             anderson.addLocal2RefAssign((Local) rop, (Ref) lop);
         }
         else if (lop instanceof Ref && rop instanceof Ref) {

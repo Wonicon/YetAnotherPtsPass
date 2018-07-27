@@ -1,18 +1,12 @@
 package pts;
 
-import java.lang.reflect.Parameter;
 import java.util.*;
 
 import org.jboss.util.NotImplementedException;
-import polyglot.ext.param.types.Param;
 import soot.Local;
 import soot.SootMethod;
 import soot.Value;
-import soot.jimple.ArrayRef;
-import soot.jimple.InstanceFieldRef;
-import soot.jimple.InvokeExpr;
-import soot.jimple.ParameterRef;
-import soot.jimple.Ref;
+import soot.jimple.*;
 import soot.shimple.PhiExpr;
 import soot.toolkits.scalar.Pair;
 import soot.toolkits.scalar.ValueUnitPair;
@@ -45,15 +39,6 @@ class Local2RefAssign {
 	}
 }
 
-class Ref2RefAssign {
-	//
-    Ref from, to;
-    Ref2RefAssign(Ref from, Ref to) {
-        this.to = to;
-		this.from = from;
-	}
-}
-
 class NewConstraint {
 	Local to;
 	int allocId;
@@ -63,23 +48,19 @@ class NewConstraint {
 	}
 }
 
-class ArrayConstraint {
-	int allocIdOfContent;
-	ArrayConstraint(int allocId) {
-		this.allocIdOfContent = allocId;
-	}
-}
 
 /**
  * One anderson represents a method.
  */
 public class Anderson {
+    private static final Set<Integer> Empty = new TreeSet<>();
+
     public static final Map<SootMethod, Anderson> pool = new HashMap<>();
 
     public final Map<Integer, Local> queries = new TreeMap<>();
 
     // Temporary value to record the current method.
-    private SootMethod currentMethod = null;
+    private SootMethod currentMethod;
 
     /**
      * This reference describes under which call site,
@@ -89,6 +70,7 @@ public class Anderson {
      */
     private InvokeExpr currentCallSite = null;
     private List<Value> returnList = new ArrayList<>();
+    private Local currentObject;
 
     public Anderson(SootMethod method) {
         currentMethod = method;
@@ -134,61 +116,89 @@ public class Anderson {
 
 	private Map<Local, Set<Integer>> localPTS = null;
 
-    private Map<Integer, Set<Integer>> arrayContentPTS = new HashMap<>();
+    public final static Map<Integer, Set<Integer>> arrayContentPTS = new HashMap<>();
 
     /**
      * Only the PTS of return value.
-     * TODO how to describe side effects?
      */
     private Map<InvokeExpr, Set<Integer>> invokePTS = new HashMap<>();
+
+    /**
+     * The caller of a given call site.
+     */
     private Map<InvokeExpr, SootMethod> callers = new HashMap<>();
+
+    /**
+     * Local environment per call site.
+     */
     private Map<InvokeExpr, Map<Local, Set<Integer>>> localPtsBySite = new HashMap<>();
 
+    /**
+     * Callee list.
+     */
     public final List<Anderson> calleeList = new ArrayList<>();
 
+    /**
+     * Whether this anderson should run (because related environment is updated).
+     */
     private boolean enable = true;
 
     public boolean enabled() { return enable; }
 
     private DebugLogger dl = new DebugLogger();
 
-    public void run() {
+    public boolean run() {
         enable = false;
 
         // For entry main
         if (invokePTS.keySet().isEmpty()) {
-            runUnderCallSite();
-            return;
+            return runUnderCallSite();
         }
 
+        boolean update = false;
         for (InvokeExpr callSite : invokePTS.keySet()) {
             // Env setup
             this.currentCallSite = callSite;
+            this.currentObject = null;
+            if (callSite instanceof SpecialInvokeExpr) {
+                this.currentObject = (Local)((SpecialInvokeExpr) callSite).getBase();
+            }
+            else if (callSite instanceof VirtualInvokeExpr) {
+                this.currentObject = (Local)((VirtualInvokeExpr) callSite).getBase();
+            }
 
             // Exec
-            boolean update = runUnderCallSite();
+            update |= runUnderCallSite();
 
+            /*
             if (update) {
                 // Enable all callee.
+                dl.log(dl.interProc, "wake up callees");
                 for (Anderson pass : calleeList) {
                     pass.wakeup();
                 }
             }
+            */
             // TODO Notify assignment.
         }
+
+        return update;
     }
 
     private boolean runReturn() {
         for (Value rtn : returnList) {
             if (rtn instanceof Local) {
                 Local local = (Local) rtn;
-                Set<Integer> pts = localPTS.get(local);
-                if (!invokePTS.containsKey(currentCallSite)) {
-                    invokePTS.put(currentCallSite, new TreeSet<>());
-                }
-                boolean update = invokePTS.get(currentCallSite).addAll(pts);
+                dl.log(dl.debug_all, "return local is " + local.getName());
+                Set<Integer> pts = localPTS.getOrDefault(local, Empty);
+                dl.log(dl.debug_all, "return local pts is " + pts);
+                boolean update = invokePTS.getOrDefault(currentCallSite, Empty).addAll(pts);
                 if (update) {
+                    dl.log(dl.debug_all, "wake up caller " + callers.get(currentCallSite).getName());
                     Anderson.pool.get(callers.get(currentCallSite)).wakeup();
+                }
+                else {
+                    dl.log(dl.debug_all, "Non update, invokePTS is " + invokePTS.get(currentCallSite));
                 }
             }
             else {
@@ -201,18 +211,21 @@ public class Anderson {
         return false;
     }
 
-    protected void wakeup() {
+    private void wakeup() {
         enable = true;
     }
 
     private boolean runUnderCallSite() {
-        dl.log(dl.debug_all, "Anderson on " + currentMethod);
+        dl.log(dl.debug_all, "\nAnderson on " + currentMethod);
 
         if (!localPtsBySite.containsKey(currentCallSite)) {
             localPtsBySite.put(currentCallSite, new HashMap<>());
         }
 
         localPTS = localPtsBySite.get(currentCallSite);
+
+        dl.log(dl.debug_all, "before localPTS: " + localPTS);
+        dl.log(dl.debug_all, "before refPTS: " + arrayContentPTS);
 
         for (NewConstraint nc : newConstraints) {
             if (!localPTS.containsKey(nc.to)) {
@@ -221,16 +234,17 @@ public class Anderson {
             if (nc.allocId > 0) {
                 dl.log(dl.typePrint, "to class: %s", nc.to.getClass().getSimpleName());
                 dl.log(dl.intraProc, "Mark %s -> %d (Alloc)", nc.to.getName(), nc.allocId);
+                localPTS.get(nc.to).add(nc.allocId);
             }
-            localPTS.get(nc.to).add(nc.allocId);
         }
+
         int round = 0;
         boolean global_update = false;
 		for (boolean flag = true; flag; ) {
 		    dl.log(dl.intraProc, "Round = %d ----------------------", round);
-            flag = false;
+            flag = runThisAssign();
             flag |= runParamAssign();
-		    flag |= runL2LAssign();
+            flag |= runL2LAssign();
             flag |= runL2RAssign();
             flag |= runR2LAssign();
             flag |= runPhi2LocalAssign();
@@ -240,6 +254,10 @@ public class Anderson {
             global_update |= flag;
             round += 1;
 		}
+
+
+        dl.log(dl.debug_all, "after localPTS: " + localPTS);
+        dl.log(dl.debug_all, "after refPTS: " + arrayContentPTS);
 
 		return global_update;
 	}
@@ -255,19 +273,17 @@ public class Anderson {
             ParameterRef src = pair.getO1();
             Local dst = pair.getO2();
 
-            if (!localPTS.containsKey(dst)) {
-                localPTS.put(dst, new TreeSet<>());
-            }
+            tryInitLocal(dst);
 
             int index = src.getIndex();
             Value arg = currentCallSite.getArg(index);
             if (arg instanceof Local) {
+                dl.log(dl.param, "[PARAM] local %s pts %s", dst.getName(), localPTS.get(dst));
                 Set<Integer> pts = pool.get(callers.get(currentCallSite))
                                        .getMergedLocalPTS()
-                                       .getOrDefault(arg, new TreeSet<>());
+                                       .getOrDefault(arg, Empty);
+                dl.log(dl.param, "[PARAM] arg %s pts %s", ((Local)arg).getName(), pts);
                 update |= localPTS.get(dst).addAll(pts);
-                dl.log(dl.param, "Update local %s's PTS from callsite local %s to %s",
-                        dst.getName(), ((Local) arg).getName(), localPTS.get(dst));
             }
             else {
                 dl.log(dl.param, "Unknown arg type:: " + arg.getClass());
@@ -282,12 +298,11 @@ public class Anderson {
 	    for (Pair<InvokeExpr, Local> pair : invoke2Local) {
 	        InvokeExpr src = pair.getO1();
 	        Local dst = pair.getO2();
+            dl.log(dl.interProc, "invoke assign: " + dst + " <- " + src);
 
-	        if (!localPTS.containsKey(dst)) {
-	            localPTS.put(dst, new TreeSet<>());
-            }
+            tryInitLocal(dst);
 
-            Set<Integer> pts = Anderson.pool.get(src.getMethod()).invokePTS.getOrDefault(src, new TreeSet<>());
+            Set<Integer> pts = Anderson.pool.get(src.getMethod()).invokePTS.getOrDefault(src, Empty);
             update |= localPTS.get(dst).addAll(pts);
         }
         return update;
@@ -300,9 +315,7 @@ public class Anderson {
 	        Local dst = pair.getO2();
 
 	        // Init destination Local's PTS
-            if (!localPTS.containsKey(dst)) {
-                localPTS.put(dst, new TreeSet<>());
-            }
+            tryInitLocal(dst);
 
             // Merge each phi's source into destination
 	        for (ValueUnitPair val : phi.getArgs()) {
@@ -340,19 +353,17 @@ public class Anderson {
     }
 
     private boolean runL2RAssign() {
-        dl.log(dl.fieldSensitive,"reach here, l2ra  1!\n");
         boolean flag = false;
         for (Local2RefAssign l2ra: local2RefAssigns) {
-            dl.log(dl.fieldSensitive,"reach here, l2ra  2!\n");
-            dl.log(dl.constraintPrint, "%s = %s\n", l2ra.to, l2ra.from);
-            dl.log(dl.fieldSensitive, "%s = %s\n", l2ra.to.getClass(), l2ra.from);
+            dl.log(dl.constraintPrint, "%s = %s", l2ra.to, l2ra.from);
+            dl.log(dl.fieldSensitive, "%s = %s", l2ra.to.getClass(), l2ra.from);
             // if from is empty, skip
             if (!localPTS.containsKey(l2ra.from)) {
                 continue;
             }
-            dl.log(dl.fieldSensitive,"reach here, l2ra  after !\n");
+            dl.log(dl.fieldSensitive,"reach here, l2ra  after !");
             if (l2ra.to instanceof ArrayRef) {
-                dl.log(dl.fieldSensitive,"reach here, l2ra  ArrayRef!\n");
+                dl.log(dl.fieldSensitive,"reach here, l2ra  ArrayRef!");
                 ArrayRef ar = (ArrayRef) l2ra.to;
 
                 if (baseInLocalPTS(ar)) {
@@ -367,8 +378,7 @@ public class Anderson {
                             if (arrayContentPTS.get(i).contains(pointee)) {
                                 continue;
                             }
-                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d",
-                                    i, pointee);
+                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d", i, pointee);
                         }
 
                         flag |= arrayContentPTS.get(i).addAll(localPTS.get(l2ra.from));
@@ -378,13 +388,14 @@ public class Anderson {
                     dl.loge(dl.intraProc, "base of array ref is not local!");
                 }
 
-            } else if (l2ra.to instanceof InstanceFieldRef) {
-                dl.log(dl.fieldSensitive,"reach here, l2ra instancefieldref!\n");
+            }
+            else if (l2ra.to instanceof InstanceFieldRef) {
+                dl.log(dl.fieldSensitive,"reach here, l2ra instancefieldref!");
                 InstanceFieldRef ifr = (InstanceFieldRef) l2ra.to;
 
                 if (baseInLocalPTS(ifr)) {
                     Local base = (Local) ifr.getBase();
-                    dl.log(dl.fieldSensitive,base.toString()+"=====================\n");
+                    dl.log(dl.fieldSensitive,base.toString()+"=====================");
                     for (Integer i: localPTS.get(base)) {
                         // check to, init it if empty
                         if (!arrayContentPTS.containsKey(i)) {
@@ -395,23 +406,24 @@ public class Anderson {
                             if (arrayContentPTS.get(i).contains(pointee)) {
                                 continue;
                             }
-                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d\n",
-                                    i, pointee);
+                            dl.log(dl.intraProc && pointee > 0, "Mark %d -> %d", i, pointee);
                         }
 
                         flag |= arrayContentPTS.get(i).addAll(localPTS.get(l2ra.from));
                     }
 
-                } else {
-                    dl.loge(dl.intraProc, "base of array ref is not local!\n");
+                }
+                else {
+                    dl.loge(dl.intraProc, "base of array ref is not local!");
                 }
 
             }
             else {
-                dl.loge(dl.fieldSensitive, "Ref type not implemented!\n");
+                dl.loge(dl.fieldSensitive, "Ref type not implemented!");
                 throw new NotImplementedException();
             }
         }
+
         return flag;
     }
 
@@ -419,12 +431,6 @@ public class Anderson {
         boolean flag = false;
         for (Ref2LocalAssign r2la: ref2LocalAssigns) {
             dl.log(dl.constraintPrint, "%s = %s", r2la.to, r2la.from);
-
-            // check to, and init it if empty
-            if (!localPTS.containsKey(r2la.to)) {
-                localPTS.put(r2la.to, new TreeSet<>());
-                //					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
-            }
 
             // if from is empty, skip
             if (r2la.from instanceof ArrayRef) {
@@ -446,47 +452,47 @@ public class Anderson {
                     continue;
                 }
 
-            } else if (r2la.from instanceof InstanceFieldRef) {
-//                dl.log(dl.fieldSensitive,"reach here, r2la instancefieldref first!\n");
+            }
+            else if (r2la.from instanceof InstanceFieldRef) {
                 InstanceFieldRef ifr = (InstanceFieldRef) r2la.from;
                 if (!baseInLocalPTS(ifr)) {
-                    dl.loge(dl.intraProc, "base of array ref is not local or" +
-                            " not in local PTS!\n");
+                    dl.loge(dl.intraProc, "base of instance ref is not local or not in local PTS!");
                     continue;
                 }
+
                 boolean empty = true;
                 Local base = (Local) ifr.getBase();
-                dl.log(dl.fieldSensitive," r2l field base is : %s, localPTS.get(base) is: %s\n", base, localPTS.get(base).toString());
+                dl.log(dl.fieldSensitive," r2l field base is : %s, localPTS.get(base) is: %s", base, localPTS.get(base).toString());
                 for (Integer i: localPTS.get(base)) {
-                    //dl.log(dl.fieldSensitive, "containsKey is %b, is Empty is %b\n", arrayContentPTS.containsKey(i), arrayContentPTS.get(i).isEmpty());
                     if (arrayContentPTS.containsKey(i) &&
                             !arrayContentPTS.get(i).isEmpty()) {
                         empty = false;
                     }
                 }
                 if (empty) {
-                    dl.loge(dl.intraProc, "point set of content of array not found field\n");
+                    dl.loge(dl.intraProc, "point set of content of array not found field");
                     continue;
                 }
-            } else {
+            }
+            else {
                 dl.loge(dl.intraProc, "Ref type not implemented!");
                 throw new NotImplementedException();
             }
 
             // check to, and init it if empty
-            if (!localPTS.containsKey(r2la.to)) {
-                localPTS.put(r2la.to, new TreeSet<>());
-            }
+            tryInitLocal(r2la.to);
 
             Local base;
             if (r2la.from instanceof ArrayRef)
             {
                 ArrayRef ar = (ArrayRef) r2la.from;
                 base = (Local) ar.getBase();
-            } else if (r2la.from instanceof InstanceFieldRef) {
+            }
+            else if (r2la.from instanceof InstanceFieldRef) {
                 InstanceFieldRef ifr = (InstanceFieldRef) r2la.from;
                 base = (Local) ifr.getBase();
-            } else {
+            }
+            else {
                 base = null;
             }
 
@@ -496,11 +502,11 @@ public class Anderson {
                         if (localPTS.get(r2la.to).contains(pointee)) {
                             continue;
                         }
-                        dl.log(dl.intraProc && pointee > 0, "Mark %s -> %d",
-                                r2la.to.getName(), pointee);
+                        dl.log(dl.intraProc && pointee > 0, "Mark %s -> %d", r2la.to.getName(), pointee);
                     }
 
                     flag |= localPTS.get(r2la.to).addAll(arrayContentPTS.get(i));
+                    System.out.println("localPTS: " + localPTS);
                 }
             }
         }
@@ -510,22 +516,14 @@ public class Anderson {
 	private boolean runL2LAssign() {
         boolean flag = false;
         for (Local2LocalAssign ac : local2LocalAssigns) {
-            dl.log(dl.constraintPrint, "%s = %s\n", ac.to, ac.from);
+            dl.log(dl.constraintPrint, "%s = %s", ac.to, ac.from);
 
             // check to, and init it if empty
-            if (!localPTS.containsKey(ac.to)) {
-                localPTS.put(ac.to, new TreeSet<>());
-                //					dl.log(dl.intraProc,"Add Pointer: %s\n", ac.to.getName());
-            }
+            tryInitLocal(ac.to);
 
             // if from is empty, skip
             if (!localPTS.containsKey(ac.from)) {
                 continue;
-            }
-
-            // check to, and init it if empty
-            if (!localPTS.containsKey(ac.to)) {
-                localPTS.put(ac.to, new TreeSet<>());
             }
 
             for (Integer pointee: localPTS.get(ac.from)) {
@@ -558,7 +556,7 @@ public class Anderson {
     /**
      * TODO This is a trade off as we do not record the call stack
      */
-    public Map<Local, Set<Integer>> getMergedLocalPTS() {
+    private Map<Local, Set<Integer>> getMergedLocalPTS() {
         Map<Local, Set<Integer>> pts = new HashMap<>();
         for (Map<Local, Set<Integer>> v : localPtsBySite.values()) {
             for (Map.Entry<Local, Set<Integer>> e : v.entrySet()) {
@@ -575,5 +573,37 @@ public class Anderson {
 
     public void addReturn(Local local) {
         this.returnList.add(local);
+    }
+
+    private List<Pair<ThisRef, Local>> thisAssign = new ArrayList<>();
+
+    public void addThisAssign(ThisRef thisRef, Local leftOp) {
+        thisAssign.add(new Pair<>(thisRef, leftOp));
+    }
+
+    private void tryInitLocal(Local local)
+    {
+        if (!localPTS.containsKey(local)) {
+            localPTS.put(local, new TreeSet<>());
+        }
+    }
+
+    private Map<Local, Set<Integer>> getCallerPTS()
+    {
+        return pool.get(callers.get(currentCallSite)).getMergedLocalPTS();
+    }
+
+    private boolean runThisAssign()
+    {
+        boolean update = false;
+        for (Pair<ThisRef, Local> assign : thisAssign) {
+            Local local = assign.getO2();
+            tryInitLocal(local);
+            if (currentObject == null) {
+                dl.log(dl.debug_all, "Shit, do not have object!");
+            }
+            update |= localPTS.get(local).addAll(getCallerPTS().getOrDefault(currentObject, Empty));
+        }
+        return update;
     }
 }

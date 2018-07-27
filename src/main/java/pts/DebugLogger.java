@@ -12,8 +12,8 @@ public class DebugLogger {
 
     DebugLogger() {
         debug_all = true;
-        interProc = false;
-        intraProc = false;
+        interProc = true;
+        intraProc = true;
         disasm = false;
         typePrint = false;
         constraintPrint = false;
