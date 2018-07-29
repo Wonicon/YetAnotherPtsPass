@@ -1,6 +1,5 @@
 package pts;
 
-import com.sun.istack.internal.NotNull;
 import soot.Local;
 import soot.SootField;
 import soot.jimple.*;
@@ -25,7 +24,7 @@ public class MemEnv {
         return mem.get(obj);
     }
 
-    public void replace(@NotNull MemEnv env)
+    public void replace(MemEnv env)
     {
         mem.clear();
         mem.putAll(env.mem);
