@@ -180,7 +180,6 @@ public class Anderson {
             // Exec
             update |= runUnderCallSite();
 
-            /*
             if (update) {
                 // Enable all callee.
                 dl.log(dl.interProc, "wake up callees");
@@ -188,8 +187,6 @@ public class Anderson {
                     pass.wakeup();
                 }
             }
-            */
-            // TODO Notify assignment.
         }
 
         return update;
@@ -275,8 +272,8 @@ public class Anderson {
             round += 1;
 		}
 
-		memEnvClosure();
-        runReturn();
+		global_update |= memEnvClosure();
+		global_update |= runReturn();
 
         dl.log(dl.debug_all, "after localPTS: " + localPTS);
         // dl.log(dl.debug_all, "after refPTS: " + arrayContentPTS);
