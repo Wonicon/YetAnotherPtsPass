@@ -249,7 +249,7 @@ public class Anderson {
             if (!localPTS.containsKey(nc.to)) {
                 localPTS.put(nc.to, new TreeSet<>());
             }
-            if (nc.allocId > 0) {
+            if (true) {
                 dl.log(dl.typePrint, "to class: %s", nc.to.getClass().getSimpleName());
                 dl.log(dl.intraProc, "Mark %s -> %d (Alloc)", nc.to.getName(), nc.allocId);
                 getLocalPTS(nc.to).add(nc.allocId);
@@ -395,6 +395,7 @@ public class Anderson {
                     for (Integer i: getLocalPTS(base)) {
                         env.addPTS(i, null, getLocalPTS(l2ra.from));
                     }
+                    dl.log(dl.intraProc, env.toString());
 
                 } else {
                     dl.loge(dl.intraProc, "base of array ref is not local!");
