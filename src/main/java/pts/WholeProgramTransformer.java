@@ -228,6 +228,7 @@ public class WholeProgramTransformer extends SceneTransformer {
             anderson.addAssignConstraint((Local) rop, (Local)lop);
         }
         else if (lop instanceof Local && rop instanceof Ref) {
+            dl.log(dl.debug_all, "add ref to local");
             anderson.addRef2LocalAssign((Ref) rop, (Local) lop);
         }
         else if (lop instanceof Ref && rop instanceof Local) {

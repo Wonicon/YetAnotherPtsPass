@@ -393,7 +393,7 @@ public class Anderson {
                     Local base = (Local) ar.getBase();
                     MemEnv env = ref2EnvOut.get(ar);
                     for (Integer i: getLocalPTS(base)) {
-                        env.addPTS(i, null, getLocalPTS(l2ra.from));
+                        flag |= env.addPTS(i, null, getLocalPTS(l2ra.from));
                     }
                     dl.log(dl.intraProc, env.toString());
 
@@ -409,9 +409,10 @@ public class Anderson {
                 if (baseInLocalPTS(ifr)) {
                     MemEnv env = ref2EnvOut.get(ifr);
                     Local base = (Local) ifr.getBase();
-                    dl.log(dl.fieldSensitive,base.toString()+"=====================");
+                    dl.log(dl.fieldSensitive,"=====env is " + env.toString());
                     for (Integer i: getLocalPTS(base)) {
-                        env.addPTS(i, ifr.getField(), getLocalPTS(l2ra.from));
+                        dl.log(dl.fieldSensitive, "i is :" + i + "field is : " + ifr.getField().getName()+ " local pts is + :"+getLocalPTS(l2ra.from));
+                        flag |= env.addPTS(i, ifr.getField().getName(), getLocalPTS(l2ra.from));
                     }
                 }
                 else {
@@ -488,7 +489,7 @@ public class Anderson {
             tryInitLocal(r2la.to);
 
             Local base;
-            SootField field = null;
+            String field = "";
             if (r2la.from instanceof ArrayRef) {
                 ArrayRef ar = (ArrayRef) r2la.from;
                 base = (Local) ar.getBase();
@@ -496,7 +497,7 @@ public class Anderson {
             else if (r2la.from instanceof InstanceFieldRef) {
                 InstanceFieldRef ifr = (InstanceFieldRef) r2la.from;
                 base = (Local) ifr.getBase();
-                field = ifr.getField();
+                field = ifr.getField().getName();
             }
             else {
                 base = null;
