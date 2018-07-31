@@ -121,7 +121,9 @@ public class WholeProgramTransformer extends SceneTransformer {
                 if (result != null) {
                     answer.append(q.getKey().toString()).append(":");
                     for (Integer i : result) {
-                        answer.append(" ").append(i.toString());
+                        if (i > 0) {
+                            answer.append(" ").append(i.toString());
+                        }
                     }
                     answer.append("\n");
                 }
@@ -210,7 +212,12 @@ public class WholeProgramTransformer extends SceneTransformer {
             }
             // lop must be local, not ref
             anderson.addNewConstraint(allocId, (Local)lop);
-            allocId = -1;
+            if (allocId < 0) {
+                allocId = allocId - 1;
+            }
+            else {
+                allocId = -allocId;
+            }
         }
         else if (rop instanceof PhiExpr) {
             PhiExpr phi = ((PhiExpr) rop);
