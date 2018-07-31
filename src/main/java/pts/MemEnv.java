@@ -14,7 +14,6 @@ public class MemEnv {
     private final Map<Integer, Map<String, Set<Integer>>> mem_f = new HashMap<>();
 
     private final List<MemEnv> parents = new ArrayList<>();
-    private boolean is_field = false;
 
     private boolean assignUpdated = false;
 
@@ -22,14 +21,12 @@ public class MemEnv {
     {
         if (field == null)
         {
-            is_field = false;
             if (!mem.containsKey(obj))
             {
                 mem.put(obj, new TreeSet<>());
             }
             return mem.get(obj);
         } else {
-            is_field = true;
             if (!mem_f.containsKey(obj))
             {
                 mem_f.put(obj, new HashMap<>());
@@ -44,14 +41,10 @@ public class MemEnv {
 
     public void replace(MemEnv env)
     {
-        if (is_field == false)
-        {
-            mem.clear();
-            mem.putAll(env.mem);
-        } else {
-            mem_f.clear();
-            mem_f.putAll(env.mem_f);
-        }
+        mem.clear();
+        mem.putAll(env.mem);
+        mem_f.clear();
+        mem_f.putAll(env.mem_f);
     }
 
     public void addParent(MemEnv env)
@@ -69,7 +62,6 @@ public class MemEnv {
         boolean updated;
         if (field == null)
         {
-            is_field = false;
             if (!mem.containsKey(base))
             {
                 mem.put(base, new TreeSet<>());
@@ -77,7 +69,6 @@ public class MemEnv {
             updated = mem.get(base).addAll(pts);
 
         } else {
-            is_field = true;
             if (!mem_f.containsKey(base))
             {
                 mem_f.put(base, new HashMap<>());
@@ -97,47 +88,41 @@ public class MemEnv {
         assignUpdated = false;
 
         for (MemEnv parent : parents) {
-            if (is_field == false)
+            for (Map.Entry<Integer, Set<Integer>> entry : parent.mem.entrySet())
             {
-                for (Map.Entry<Integer, Set<Integer>> entry : parent.mem.entrySet())
+                Integer key = entry.getKey();
+                Set<Integer> value = entry.getValue();
+                if (!mem.containsKey(entry.getKey()))
                 {
-                    Integer key = entry.getKey();
-                    Set<Integer> value = entry.getValue();
-                    if (!mem.containsKey(entry.getKey()))
-                    {
-                        mem.put(key, value);
-                        updated = true;
-                    } else
-                    {
-                        updated |= mem.get(key).addAll(value);
-                    }
+                    mem.put(key, value);
+                    updated = true;
+                } else
+                {
+                    updated |= mem.get(key).addAll(value);
                 }
-            } else {
-                for (Map.Entry<Integer,Map<String, Set<Integer>>> entry : parent.mem_f.entrySet())
-                {
-                    Integer key = entry.getKey();
-                    Map<String, Set<Integer>> entry_value = entry.getValue();
+            }
+            for (Map.Entry<Integer,Map<String, Set<Integer>>> entry : parent.mem_f.entrySet())
+            {
+                Integer key = entry.getKey();
+                Map<String, Set<Integer>> entry_value = entry.getValue();
 
-                    if (!mem_f.containsKey(entry.getKey()))
+                if (!mem_f.containsKey(entry.getKey()))
+                {
+                    mem_f.put(key, entry_value);
+                    updated = true;
+                } else
+                {
+                    for (Map.Entry<String, Set<Integer>> entry1 : entry.getValue().entrySet())
                     {
-                        mem_f.put(key, entry_value);
-                        updated = true;
-                    } else
-                    {
-                        for (Map.Entry<String, Set<Integer>> entry1 : entry.getValue().entrySet())
-                        {
-                            String field = entry1.getKey();
-                            Set<Integer> entry1_value = entry1.getValue();
-                            if (!mem_f.get(key).containsKey(entry1.getKey())) {
-                                mem_f.get(key).put(field, entry1_value);
-                                updated = true;
-                            }
-                            updated |= mem_f.get(key).get(field).addAll(entry1_value);
+                        String field = entry1.getKey();
+                        Set<Integer> entry1_value = entry1.getValue();
+                        if (!mem_f.get(key).containsKey(entry1.getKey())) {
+                            mem_f.get(key).put(field, entry1_value);
+                            updated = true;
                         }
+                        updated |= mem_f.get(key).get(field).addAll(entry1_value);
                     }
-
                 }
-
             }
         }
 
@@ -147,29 +132,20 @@ public class MemEnv {
     @Override
     public String toString()
     {
-        if (is_field == false)
-        {
-            return mem.toString();
-        } else {
-            return mem_f.toString();
-        }
+        return mem.toString() + mem_f.toString();
     }
 
     public boolean mergeEnv(MemEnv memEnv) {
         boolean updated = false;
-        if (memEnv.is_field == false)
+        for (Map.Entry<Integer, Set<Integer>> entry : memEnv.mem.entrySet())
         {
-            for (Map.Entry<Integer, Set<Integer>> entry : memEnv.mem.entrySet())
+            updated |= addPTS(entry.getKey(), null /* TODO */, entry.getValue());
+        }
+        for (Map.Entry<Integer, Map<String, Set<Integer>>> entry : memEnv.mem_f.entrySet())
+        {
+            for (Map.Entry<String, Set<Integer>> entry1 : entry.getValue().entrySet())
             {
-                updated |= addPTS(entry.getKey(), null /* TODO */, entry.getValue());
-            }
-        } else {
-            for (Map.Entry<Integer, Map<String, Set<Integer>>> entry : memEnv.mem_f.entrySet())
-            {
-                for (Map.Entry<String, Set<Integer>> entry1 : entry.getValue().entrySet())
-                {
-                    updated |= addPTS(entry.getKey(), entry1.getKey() /* TODO */, entry1.getValue());
-                }
+                updated |= addPTS(entry.getKey(), entry1.getKey() /* TODO */, entry1.getValue());
             }
         }
         return updated;

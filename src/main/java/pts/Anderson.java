@@ -249,7 +249,7 @@ public class Anderson {
             if (!localPTS.containsKey(nc.to)) {
                 localPTS.put(nc.to, new TreeSet<>());
             }
-            if (true) {
+            if (nc.allocId > 0) {
                 dl.log(dl.typePrint, "to class: %s", nc.to.getClass().getSimpleName());
                 dl.log(dl.intraProc, "Mark %s -> %d (Alloc)", nc.to.getName(), nc.allocId);
                 getLocalPTS(nc.to).add(nc.allocId);
@@ -489,10 +489,11 @@ public class Anderson {
             tryInitLocal(r2la.to);
 
             Local base;
-            String field = "";
+            String field;
             if (r2la.from instanceof ArrayRef) {
                 ArrayRef ar = (ArrayRef) r2la.from;
                 base = (Local) ar.getBase();
+                field = null;
             }
             else if (r2la.from instanceof InstanceFieldRef) {
                 InstanceFieldRef ifr = (InstanceFieldRef) r2la.from;
@@ -501,6 +502,7 @@ public class Anderson {
             }
             else {
                 base = null;
+                field = null;
             }
 
             MemEnv env = ref2EnvIn.get(r2la.from);
@@ -622,7 +624,9 @@ public class Anderson {
         while (updated) {
             updated = false;
             for (MemEnv env : memEnvList) {
-                updated |= env.update();
+                boolean u = env.update();
+                System.out.println("updated: " + updated + ", " + env + ", u=" + u);
+                updated |= u;
             }
             globalUpdated |= updated;
         }
